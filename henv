@@ -176,10 +176,16 @@ source "$HENV_PATH/bin/activate"
 export HENV_ACTIVE="$HENV_LABEL"
 export HENV_PATH="$HENV_PATH"
 PS1="(henv:$HENV_LABEL) \$PS1"
-# Wire up heyy shell tools (module function + tab completion) if available
+# Wire up heyy tools if available
 if [ -x "$HENV_PATH/bin/heyy" ]; then
-    eval "\$($HENV_PATH/bin/heyy shell-init 2>/dev/null)" 2>/dev/null
+    # Tab completion for heyy/her/heppyyier
     eval "\$($HENV_PATH/bin/heyy completion --shell bash 2>/dev/null)" 2>/dev/null
+    # Regenerate TCL modulefiles for installed packages (silent; no-op if none)
+    "$HENV_PATH/bin/heyy" generate-modules >/dev/null 2>&1 || true
+    # Register the modulefiles dir with the system module command (if present)
+    if command -v module >/dev/null 2>&1; then
+        eval "\$($HENV_PATH/bin/heyy modules 2>/dev/null)" 2>/dev/null
+    fi
 fi
 # Banner
 echo ""
@@ -203,8 +209,11 @@ cmd_print_activate() {
     echo "export HENV_ACTIVE=\"$HENV_LABEL\""
     echo "export HENV_PATH=\"$HENV_PATH\""
     echo "PS1=\"(henv:$HENV_LABEL) \$PS1\""
-    echo "[ -x \"$HENV_PATH/bin/heyy\" ] && eval \"\$($HENV_PATH/bin/heyy shell-init 2>/dev/null)\" 2>/dev/null"
-    echo "[ -x \"$HENV_PATH/bin/heyy\" ] && eval \"\$($HENV_PATH/bin/heyy completion 2>/dev/null)\" 2>/dev/null"
+    echo "if [ -x \"$HENV_PATH/bin/heyy\" ]; then"
+    echo "    eval \"\$($HENV_PATH/bin/heyy completion 2>/dev/null)\" 2>/dev/null"
+    echo "    $HENV_PATH/bin/heyy generate-modules >/dev/null 2>&1 || true"
+    echo "    command -v module >/dev/null 2>&1 && eval \"\$($HENV_PATH/bin/heyy modules 2>/dev/null)\" 2>/dev/null"
+    echo "fi"
 }
 
 # ─── Commands ─────────────────────────────────────────────────────────────────
