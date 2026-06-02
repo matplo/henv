@@ -1,0 +1,417 @@
+#!/usr/bin/env bash
+# henv — HEP virtual environment manager
+# https://github.com/matplo/henv
+HENV_VERSION="0.1.0"
+HENV_SCRIPT_URL="https://raw.githubusercontent.com/matplo/henv/main/henv"
+HENV_DEFAULT_DIR="$HOME/.henvs"
+
+# ─── Utilities ────────────────────────────────────────────────────────────────
+
+die()  { echo "[henv] ERROR: $*" >&2; exit 1; }
+info() { echo "[henv] $*"; }
+warn() { echo "[henv] WARNING: $*" >&2; }
+command_exists() { command -v "$1" >/dev/null 2>&1; }
+
+# ─── Python / tool resolution ─────────────────────────────────────────────────
+
+find_python() {
+    local py
+    if [ -n "$HENV_PYTHON_FLAG" ]; then
+        py="$HENV_PYTHON_FLAG"
+        [ -x "$py" ] || die "Python interpreter not found: $py"
+    else
+        py=$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo "")
+        [ -n "$py" ] || die "No python3 found in PATH"
+    fi
+    local ver
+    ver=$("$py" -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>/dev/null) \
+        || die "Cannot run: $py"
+    local maj="${ver%%.*}" min="${ver#*.}"
+    ( [ "$maj" -ge 3 ] && [ "$min" -ge 8 ] ) || die "Python 3.8+ required, found $ver via $py"
+    echo "$py"
+}
+
+detect_tool() {
+    HENV_PYTHON=$(find_python)
+    if command_exists uv; then
+        HENV_TOOL="uv"
+    elif command_exists virtualenv; then
+        HENV_TOOL="virtualenv"
+    elif "$HENV_PYTHON" -m virtualenv --version >/dev/null 2>&1; then
+        HENV_TOOL="virtualenv_module"
+    else
+        HENV_TOOL="venv"
+    fi
+}
+
+# ─── Env path resolution ──────────────────────────────────────────────────────
+
+resolve_env_path() {
+    if [ -n "$HENV_NAME" ]; then
+        [ -z "$HENV_LOCATION" ] || die "--name and a location argument are mutually exclusive"
+        HENV_PATH="$HENV_DEFAULT_DIR/$HENV_NAME"
+        HENV_LABEL="$HENV_NAME"
+    elif [ -n "$HENV_LOCATION" ]; then
+        local base
+        if [ "$HENV_LOCATION" = "." ]; then
+            base="$PWD"
+        elif [[ "$HENV_LOCATION" = /* ]]; then
+            base="$HENV_LOCATION"
+        else
+            base="$PWD/$HENV_LOCATION"
+        fi
+        base=$(cd "$base" 2>/dev/null && pwd) || die "Directory not found: $HENV_LOCATION"
+        HENV_PATH="$base/.venv"
+        HENV_LABEL="$(basename "$base")"
+    else
+        HENV_PATH="$HENV_DEFAULT_DIR/default"
+        HENV_LABEL="default"
+    fi
+
+    if env_exists; then
+        HENV_IS_NEW=false
+    else
+        HENV_IS_NEW=true
+    fi
+}
+
+env_exists() {
+    [ -f "$HENV_PATH/bin/activate" ]
+}
+
+# ─── Venv lifecycle ───────────────────────────────────────────────────────────
+
+create_env() {
+    detect_tool
+    info "Creating env '$HENV_LABEL' at $HENV_PATH"
+    info "Python: $HENV_PYTHON  Tool: $HENV_TOOL"
+    mkdir -p "$(dirname "$HENV_PATH")"
+    case "$HENV_TOOL" in
+        uv)
+            uv venv --python "$HENV_PYTHON" "$HENV_PATH" || die "uv venv failed" ;;
+        virtualenv)
+            virtualenv -p "$HENV_PYTHON" "$HENV_PATH" || die "virtualenv failed" ;;
+        virtualenv_module)
+            "$HENV_PYTHON" -m virtualenv -p "$HENV_PYTHON" "$HENV_PATH" \
+                || die "python -m virtualenv failed" ;;
+        venv)
+            "$HENV_PYTHON" -m venv "$HENV_PATH" || die "python -m venv failed" ;;
+    esac
+    bootstrap_pip
+    [ "$HENV_NO_HEPPYYIER" = true ] || prompt_heppyyier
+}
+
+bootstrap_pip() {
+    [ "$HENV_TOOL" = "uv" ] && return
+    info "Upgrading pip..."
+    "$HENV_PATH/bin/pip" install --upgrade pip --quiet \
+        || warn "pip upgrade failed (non-fatal)"
+}
+
+prompt_heppyyier() {
+    local answer
+    if [ "$HENV_YES" = true ]; then
+        answer="y"
+    else
+        printf "[henv] Install heppyyier (provides 'heyy install fastjet ...')? [Y/n] "
+        read -r answer
+        answer="${answer:-y}"
+    fi
+    case "$answer" in
+        y|Y|yes|YES) install_heppyyier ;;
+        *) info "Skipping heppyyier (run 'pip install heppyyier' later)" ;;
+    esac
+}
+
+install_heppyyier() {
+    info "Installing heppyyier..."
+    if [ "$HENV_TOOL" = "uv" ]; then
+        uv pip install --python "$HENV_PATH" heppyyier \
+            || warn "heppyyier install failed"
+    else
+        "$HENV_PATH/bin/pip" install heppyyier \
+            || warn "heppyyier install failed"
+    fi
+    local heyy="$HENV_PATH/bin/heyy"
+    if [ -x "$heyy" ]; then
+        info "Running heyy init..."
+        "$heyy" init || warn "heyy init failed (non-fatal)"
+    else
+        warn "heyy not found after install — skipping heyy init"
+    fi
+}
+
+# ─── Activation ───────────────────────────────────────────────────────────────
+
+launch_subshell() {
+    local tmpfile
+    tmpfile=$(mktemp /tmp/henv_init.XXXXXX)
+
+    # First line of the init file cleans up the file itself
+    cat > "$tmpfile" <<INITEOF
+rm -f "$tmpfile"
+# Source user's shell rc for aliases and PATH
+if [ -f "\$HOME/.bashrc" ]; then
+    source "\$HOME/.bashrc" 2>/dev/null
+elif [ -f "\$HOME/.bash_profile" ]; then
+    source "\$HOME/.bash_profile" 2>/dev/null
+fi
+# Activate the venv
+source "$HENV_PATH/bin/activate"
+# Decorate prompt and export markers
+export HENV_ACTIVE="$HENV_LABEL"
+export HENV_PATH="$HENV_PATH"
+PS1="(henv:$HENV_LABEL) \$PS1"
+# Banner
+echo ""
+echo "[henv] active : $HENV_LABEL"
+echo "[henv] path   : $HENV_PATH"
+echo "[henv] python : \$(python --version 2>&1)"
+echo "[henv] type 'exit' or Ctrl-D to deactivate"
+echo ""
+INITEOF
+
+    exec bash --init-file "$tmpfile"
+}
+
+cmd_print_activate() {
+    resolve_env_path
+    [ "$HENV_IS_NEW" = true ] && create_env
+    echo "source \"$HENV_PATH/bin/activate\""
+    echo "export HENV_ACTIVE=\"$HENV_LABEL\""
+    echo "export HENV_PATH=\"$HENV_PATH\""
+    echo "PS1=\"(henv:$HENV_LABEL) \$PS1\""
+}
+
+# ─── Commands ─────────────────────────────────────────────────────────────────
+
+cmd_activate() {
+    resolve_env_path
+    if [ "$HENV_IS_NEW" = true ]; then
+        create_env
+    else
+        info "Activating existing env: $HENV_PATH"
+    fi
+    launch_subshell
+}
+
+cmd_run() {
+    resolve_env_path
+    [ "$HENV_IS_NEW" = true ] && create_env
+    [ "${#HENV_RUN_ARGS[@]}" -gt 0 ] || die "--run requires a command"
+    bash -c "source \"$HENV_PATH/bin/activate\" && $(printf '%q ' "${HENV_RUN_ARGS[@]}")"
+}
+
+cmd_update() {
+    local self
+    # Resolve real path of this script, handling symlinks
+    if command_exists realpath; then
+        self=$(realpath "$0")
+    elif command_exists readlink; then
+        self=$(readlink -f "$0" 2>/dev/null || echo "$0")
+    else
+        self="$0"
+    fi
+    [ -w "$self" ] || die "Cannot write to $self — check permissions or reinstall"
+    info "Updating $self from $HENV_SCRIPT_URL ..."
+    local tmp
+    tmp=$(mktemp /tmp/henv_update.XXXXXX)
+    if ! curl -fsSL "$HENV_SCRIPT_URL" -o "$tmp"; then
+        rm -f "$tmp"
+        die "Download failed"
+    fi
+    local first_line
+    first_line=$(head -1 "$tmp")
+    if [ "$first_line" != "#!/usr/bin/env bash" ]; then
+        rm -f "$tmp"
+        die "Downloaded file looks invalid (first line: $first_line)"
+    fi
+    chmod +x "$tmp"
+    mv "$tmp" "$self"
+    info "Updated. Version: $("$self" --version 2>/dev/null || echo "unknown")"
+}
+
+cmd_install() {
+    local prefix="${1:-$HOME/.local}"
+    local bin_dir="$prefix/bin"
+    mkdir -p "$bin_dir"
+    local dest="$bin_dir/henv"
+    info "Downloading $HENV_SCRIPT_URL → $dest"
+    if ! curl -fsSL "$HENV_SCRIPT_URL" -o "$dest"; then
+        die "Download failed"
+    fi
+    chmod +x "$dest"
+    info "henv installed to $dest"
+    case ":$PATH:" in
+        *":$bin_dir:"*) ;;
+        *)
+            warn "$bin_dir is not in your PATH"
+            echo "Add to your ~/.bashrc or ~/.zshrc:"
+            echo "  export PATH=\"$bin_dir:\$PATH\""
+            ;;
+    esac
+}
+
+cmd_list() {
+    if [ ! -d "$HENV_DEFAULT_DIR" ]; then
+        info "No envs found ($HENV_DEFAULT_DIR does not exist)"
+        return
+    fi
+    info "Envs under $HENV_DEFAULT_DIR:"
+    local found=false
+    for dir in "$HENV_DEFAULT_DIR"/*/; do
+        [ -d "$dir" ] || continue
+        found=true
+        local name
+        name=$(basename "$dir")
+        if [ -f "$dir/bin/activate" ]; then
+            local py_ver
+            py_ver=$("$dir/bin/python" --version 2>&1)
+            printf "  %-24s  %s\n" "$name" "$py_ver"
+        else
+            printf "  %-24s  (incomplete)\n" "$name"
+        fi
+    done
+    [ "$found" = true ] || info "  (none)"
+}
+
+cmd_delete() {
+    resolve_env_path
+    [ -d "$HENV_PATH" ] || die "Env not found: $HENV_PATH"
+    local answer
+    if [ "$HENV_YES" = true ]; then
+        answer="y"
+    else
+        printf "[henv] Delete %s? [y/N] " "$HENV_PATH"
+        read -r answer
+        answer="${answer:-n}"
+    fi
+    case "$answer" in
+        y|Y|yes|YES)
+            rm -rf "$HENV_PATH"
+            info "Deleted $HENV_PATH" ;;
+        *)
+            info "Aborted" ;;
+    esac
+}
+
+cmd_help() {
+    cat <<'EOF'
+henv — HEP virtual environment manager
+
+USAGE:
+  henv [OPTIONS] [LOCATION]
+
+LOCATION:
+  (none)           global env: $HOME/.henvs/default
+  .                local env:  $PWD/.venv
+  /abs/path        local env:  /abs/path/.venv
+  rel/path         local env:  $PWD/rel/path/.venv
+
+OPTIONS:
+  --name NAME      named global env: $HOME/.henvs/NAME
+  --global         explicit global default (same as no LOCATION)
+  --python PATH    explicit Python interpreter
+  --run CMD ...    run CMD inside env, no interactive subshell
+  --update         self-update henv from GitHub
+  --install        install henv to ~/.local/bin (for piped curl usage)
+  --print-activate emit 'source ...' lines for eval
+  --list           list envs under $HOME/.henvs/
+  --delete         delete the resolved env
+  --no-heppyyier   skip heppyyier install prompt on first creation
+  --yes / -y       non-interactive; auto-answer yes to prompts
+  --version        print version string
+  -h / --help      this help
+
+EXAMPLES:
+  henv                            # global default env
+  henv .                          # local .venv in current directory
+  henv --name hep2026             # named global env
+  henv . --run python script.py   # run without subshell
+
+  # Activate in current shell (no subshell):
+  eval "$(henv --print-activate .)"
+
+INSTALL (one-liner):
+  curl -fsSL https://raw.githubusercontent.com/matplo/henv/main/henv \
+    -o ~/.local/bin/henv && chmod +x ~/.local/bin/henv
+
+  # Or self-installing (also checks PATH):
+  curl -fsSL https://raw.githubusercontent.com/matplo/henv/main/henv | bash -s -- --install
+
+SHELL INTEGRATION (add to ~/.bashrc):
+  hactivate() { eval "$(henv --print-activate "$@")"; }
+EOF
+}
+
+# ─── Argument parsing ─────────────────────────────────────────────────────────
+
+HENV_NAME=""
+HENV_LOCATION=""
+HENV_PYTHON_FLAG=""
+HENV_YES=false
+HENV_NO_HEPPYYIER=false
+HENV_SUBCOMMAND="activate"
+HENV_RUN_ARGS=()
+HENV_INSTALL_PREFIX=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --name)
+            [ -n "${2:-}" ] || die "--name requires a value"
+            HENV_NAME="$2"; shift 2 ;;
+        --name=*)
+            HENV_NAME="${1#--name=}"; shift ;;
+        --python)
+            [ -n "${2:-}" ] || die "--python requires a value"
+            HENV_PYTHON_FLAG="$2"; shift 2 ;;
+        --python=*)
+            HENV_PYTHON_FLAG="${1#--python=}"; shift ;;
+        --global)
+            shift ;;
+        --run)
+            HENV_SUBCOMMAND="run"; shift
+            HENV_RUN_ARGS=("$@"); break ;;
+        --update)
+            HENV_SUBCOMMAND="update"; shift ;;
+        --install)
+            HENV_SUBCOMMAND="install"; shift
+            HENV_INSTALL_PREFIX="${1:-}"; break ;;
+        --print-activate)
+            HENV_SUBCOMMAND="print_activate"; shift ;;
+        --list)
+            HENV_SUBCOMMAND="list"; shift ;;
+        --delete)
+            HENV_SUBCOMMAND="delete"; shift ;;
+        --no-heppyyier)
+            HENV_NO_HEPPYYIER=true; shift ;;
+        --yes|-y)
+            HENV_YES=true; shift ;;
+        --version)
+            HENV_SUBCOMMAND="version"; shift ;;
+        -h|--help)
+            HENV_SUBCOMMAND="help"; shift ;;
+        --)
+            shift; break ;;
+        -*)
+            die "Unknown option: $1 (try --help)" ;;
+        *)
+            [ -z "$HENV_LOCATION" ] || die "Unexpected argument: '$1' (location already set to '$HENV_LOCATION')"
+            HENV_LOCATION="$1"; shift ;;
+    esac
+done
+
+# ─── Dispatch ─────────────────────────────────────────────────────────────────
+
+case "$HENV_SUBCOMMAND" in
+    activate)       cmd_activate ;;
+    run)            cmd_run ;;
+    update)         cmd_update ;;
+    install)        cmd_install "$HENV_INSTALL_PREFIX" ;;
+    print_activate) cmd_print_activate ;;
+    list)           cmd_list ;;
+    delete)         cmd_delete ;;
+    help)           cmd_help ;;
+    version)        echo "henv $HENV_VERSION" ;;
+    *)              die "Unknown subcommand: $HENV_SUBCOMMAND" ;;
+esac
