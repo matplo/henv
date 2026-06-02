@@ -148,13 +148,20 @@ On first creation, `henv` prompts:
 [henv] Install heppyyier (provides 'heyy install fastjet ...')? [Y/n]
 ```
 
-Answering yes installs `heppyyier` and runs `heyy init` to set up the recipe cache
-and package store inside the new venv.
+Answering yes installs `heppyyier` (tries PyPI first, falls back to GitHub) and runs
+`heyy init` to set up the recipe cache and package store inside the new venv.
+The cppyy backend is automatically patched if it has broken library paths.
 
 Skip with `--no-heppyyier`:
 ```bash
 henv . --no-heppyyier
 ```
+
+Every time you enter the subshell, if `heyy` is present:
+- Tab completion for `heyy` / `her` / `heppyyier` is enabled
+- TCL modulefiles are regenerated for all installed packages (`heyy generate-modules`)
+- If a `module` command (Lmod / Environment Modules) is available, the modulefiles
+  directory is registered with `module use` so `module load fastjet/3.5.1` works
 
 ---
 
