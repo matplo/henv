@@ -36,7 +36,7 @@ detect_tool() {
     HENV_PYTHON=$(find_python)
     if command_exists uv; then
         HENV_TOOL="uv"
-    elif command_exists virtualenv; then
+    elif command_exists virtualenv && virtualenv --version >/dev/null 2>&1; then
         HENV_TOOL="virtualenv"
     elif "$HENV_PYTHON" -m virtualenv --version >/dev/null 2>&1; then
         HENV_TOOL="virtualenv_module"
