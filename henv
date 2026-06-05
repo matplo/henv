@@ -13,6 +13,22 @@ info() { echo "[henv] $*"; }
 warn() { echo "[henv] WARNING: $*" >&2; }
 command_exists() { command -v "$1" >/dev/null 2>&1; }
 
+_system_has_cppyy() {
+    # Returns true only when HENV_SYSTEM_PACKAGES_DIR is set AND its registry.json
+    # contains a cppyy entry built with --target (i.e. a cppyy/ package dir exists
+    # directly in the registered prefix).
+    [ -n "$HENV_SYSTEM_PACKAGES_DIR" ] || return 1
+    local reg="$HENV_SYSTEM_PACKAGES_DIR/registry.json"
+    grep -q '"cppyy"' "$reg" 2>/dev/null || return 1
+    local prefix
+    prefix=$(python3 -c "
+import json
+d=json.load(open('$reg'))
+print(d.get('packages',{}).get('cppyy',{}).get('prefix',''))
+" 2>/dev/null)
+    [ -n "$prefix" ] && [ -d "$prefix/cppyy" ]
+}
+
 _read_toml_key() {
     # Extract a simple string value from a TOML file: key = "value" or key = 'value'
     local key="$1" toml="${2:-.heppyyier.toml}"
@@ -162,6 +178,21 @@ install_heppyyier() {
         fi
     fi
     [ "$installed" = true ] || { warn "heppyyier install failed from both PyPI and GitHub"; return; }
+
+    # Install cppyy unless the system packages dir already provides a
+    # heppyyier-built cppyy (--target install confirmed by cppyy/ dir in prefix).
+    # On HPC with a shared source-built cppyy this avoids the broken binary wheel.
+    if _system_has_cppyy; then
+        info "System cppyy found in $HENV_SYSTEM_PACKAGES_DIR — skipping binary wheel install"
+    else
+        if [ "$HENV_TOOL" = "uv" ]; then
+            uv pip install --python "$HENV_PATH" cppyy --quiet 2>/dev/null \
+                || warn "cppyy install failed (non-fatal)"
+        else
+            "$HENV_PATH/bin/pip" install cppyy --quiet \
+                || warn "cppyy install failed (non-fatal)"
+        fi
+    fi
 
     local heyy="$HENV_PATH/bin/heyy"
     if [ -x "$heyy" ]; then
