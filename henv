@@ -179,18 +179,23 @@ install_heppyyier() {
     fi
     [ "$installed" = true ] || { warn "heppyyier install failed from both PyPI and GitHub"; return; }
 
-    # Install cppyy unless the system packages dir already provides a
-    # heppyyier-built cppyy (--target install confirmed by cppyy/ dir in prefix).
-    # On HPC with a shared source-built cppyy this avoids the broken binary wheel.
-    if _system_has_cppyy; then
-        info "System cppyy found in $HENV_SYSTEM_PACKAGES_DIR — skipping binary wheel install"
-    else
-        if [ "$HENV_TOOL" = "uv" ]; then
-            uv pip install --python "$HENV_PATH" cppyy --quiet 2>/dev/null \
-                || warn "cppyy install failed (non-fatal)"
+    # Remove the binary cppyy wheel when --no-cppyy is set explicitly, or when
+    # the system packages dir already provides a heppyyier-built cppyy
+    # (auto-detected via _system_has_cppyy: registry entry + cppyy/ dir in prefix).
+    # On HPC this avoids the broken binary wheel; system cppyy is used instead
+    # via _ensure_cppyy_on_syspath() in heppyyier's loader.
+    if [ "$HENV_NO_CPPYY" = true ] || _system_has_cppyy; then
+        if [ "$HENV_NO_CPPYY" = true ]; then
+            info "Removing binary cppyy wheel (--no-cppyy)"
         else
-            "$HENV_PATH/bin/pip" install cppyy --quiet \
-                || warn "cppyy install failed (non-fatal)"
+            info "Removing binary cppyy wheel (system cppyy found in $HENV_SYSTEM_PACKAGES_DIR)"
+        fi
+        if [ "$HENV_TOOL" = "uv" ]; then
+            uv pip uninstall --python "$HENV_PATH" \
+                cppyy cppyy-backend cppyy-cling CPyCppyy 2>/dev/null || true
+        else
+            "$HENV_PATH/bin/pip" uninstall -y \
+                cppyy cppyy-backend cppyy-cling CPyCppyy 2>/dev/null || true
         fi
     fi
 
@@ -405,6 +410,8 @@ OPTIONS:
   --delete         delete the resolved env
   --packages-dir PATH        set HEPPYYIER_PACKAGES_DIR (user-writable package store)
   --system-packages-dir PATH set HEPPYYIER_SYSTEM_PACKAGES_DIR (read-only shared base)
+  --no-cppyy                 uninstall binary cppyy wheel after heppyyier install
+                             (auto-applied when system-packages-dir has heppyyier cppyy)
   --no-heppyyier             skip heppyyier install prompt on first creation
   --yes / -y                 non-interactive; auto-answer yes to prompts
   --version                  print version string
@@ -453,6 +460,7 @@ HENV_RUN_ARGS=()
 HENV_INSTALL_PREFIX=""
 HENV_PACKAGES_DIR="${HEPPYYIER_PACKAGES_DIR:-}"
 HENV_SYSTEM_PACKAGES_DIR="${HEPPYYIER_SYSTEM_PACKAGES_DIR:-}"
+HENV_NO_CPPYY=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -492,6 +500,8 @@ while [ $# -gt 0 ]; do
             HENV_SYSTEM_PACKAGES_DIR="$2"; shift 2 ;;
         --system-packages-dir=*)
             HENV_SYSTEM_PACKAGES_DIR="${1#--system-packages-dir=}"; shift ;;
+        --no-cppyy)
+            HENV_NO_CPPYY=true; shift ;;
         --no-heppyyier)
             HENV_NO_HEPPYYIER=true; shift ;;
         --yes|-y)
