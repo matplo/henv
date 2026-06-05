@@ -13,6 +13,15 @@ info() { echo "[henv] $*"; }
 warn() { echo "[henv] WARNING: $*" >&2; }
 command_exists() { command -v "$1" >/dev/null 2>&1; }
 
+_read_toml_key() {
+    # Extract a simple string value from a TOML file: key = "value" or key = 'value'
+    local key="$1" toml="${2:-.heppyyier.toml}"
+    [ -f "$toml" ] || return 0
+    grep -E "^\s*${key}\s*=" "$toml" \
+        | head -1 \
+        | sed -E "s/^\s*${key}\s*=\s*[\"']?([^\"'#]+)[\"']?\s*$/\1/"
+}
+
 # ─── Python / tool resolution ─────────────────────────────────────────────────
 
 find_python() {
@@ -73,6 +82,14 @@ resolve_env_path() {
         HENV_IS_NEW=false
     else
         HENV_IS_NEW=true
+    fi
+
+    # Auto-detect packages dirs from .heppyyier.toml in CWD (flags take precedence)
+    if [ -z "$HENV_PACKAGES_DIR" ]; then
+        HENV_PACKAGES_DIR=$(_read_toml_key packages_dir) || true
+    fi
+    if [ -z "$HENV_SYSTEM_PACKAGES_DIR" ]; then
+        HENV_SYSTEM_PACKAGES_DIR=$(_read_toml_key system_packages_dir) || true
     fi
 }
 
@@ -172,6 +189,8 @@ elif [ -f "\$HOME/.bash_profile" ]; then
 fi
 # Activate the venv
 source "$HENV_PATH/bin/activate"
+${HENV_PACKAGES_DIR:+export HEPPYYIER_PACKAGES_DIR="$HENV_PACKAGES_DIR"}
+${HENV_SYSTEM_PACKAGES_DIR:+export HEPPYYIER_SYSTEM_PACKAGES_DIR="$HENV_SYSTEM_PACKAGES_DIR"}
 # Decorate prompt and export markers
 export HENV_ACTIVE="$HENV_LABEL"
 export HENV_PATH="$HENV_PATH"
@@ -206,6 +225,8 @@ cmd_print_activate() {
     resolve_env_path
     [ "$HENV_IS_NEW" = true ] && create_env
     echo "source \"$HENV_PATH/bin/activate\""
+    [ -n "$HENV_PACKAGES_DIR" ]        && echo "export HEPPYYIER_PACKAGES_DIR=\"$HENV_PACKAGES_DIR\""
+    [ -n "$HENV_SYSTEM_PACKAGES_DIR" ] && echo "export HEPPYYIER_SYSTEM_PACKAGES_DIR=\"$HENV_SYSTEM_PACKAGES_DIR\""
     echo "export HENV_ACTIVE=\"$HENV_LABEL\""
     echo "export HENV_PATH=\"$HENV_PATH\""
     echo "PS1=\"(henv:$HENV_LABEL) \$PS1\""
@@ -351,10 +372,22 @@ OPTIONS:
   --print-activate emit 'source ...' lines for eval
   --list           list envs under $HOME/.henvs/
   --delete         delete the resolved env
-  --no-heppyyier   skip heppyyier install prompt on first creation
-  --yes / -y       non-interactive; auto-answer yes to prompts
-  --version        print version string
-  -h / --help      this help
+  --packages-dir PATH        set HEPPYYIER_PACKAGES_DIR (user-writable package store)
+  --system-packages-dir PATH set HEPPYYIER_SYSTEM_PACKAGES_DIR (read-only shared base)
+  --no-heppyyier             skip heppyyier install prompt on first creation
+  --yes / -y                 non-interactive; auto-answer yes to prompts
+  --version                  print version string
+  -h / --help                this help
+
+PACKAGE SHARING (HPC / shared filesystems):
+  henv --system-packages-dir /shared/hep/packages .
+    # User packages go to .venv/heppyyier_packages/ (writable)
+    # Shared pre-built packages are visible read-only from /shared/hep/packages
+    # 'heyy install mypkg' writes to user dir; shared packages load from /shared/
+
+  # Or configure in .heppyyier.toml (auto-detected by henv):
+  #   packages_dir = "~/.heppyyier_packages"
+  #   system_packages_dir = "/shared/hep/packages"
 
 EXAMPLES:
   henv                            # global default env
@@ -387,6 +420,8 @@ HENV_NO_HEPPYYIER=false
 HENV_SUBCOMMAND="activate"
 HENV_RUN_ARGS=()
 HENV_INSTALL_PREFIX=""
+HENV_PACKAGES_DIR=""
+HENV_SYSTEM_PACKAGES_DIR=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -416,6 +451,16 @@ while [ $# -gt 0 ]; do
             HENV_SUBCOMMAND="list"; shift ;;
         --delete)
             HENV_SUBCOMMAND="delete"; shift ;;
+        --packages-dir)
+            [ -n "${2:-}" ] || die "--packages-dir requires a value"
+            HENV_PACKAGES_DIR="$2"; shift 2 ;;
+        --packages-dir=*)
+            HENV_PACKAGES_DIR="${1#--packages-dir=}"; shift ;;
+        --system-packages-dir)
+            [ -n "${2:-}" ] || die "--system-packages-dir requires a value"
+            HENV_SYSTEM_PACKAGES_DIR="$2"; shift 2 ;;
+        --system-packages-dir=*)
+            HENV_SYSTEM_PACKAGES_DIR="${1#--system-packages-dir=}"; shift ;;
         --no-heppyyier)
             HENV_NO_HEPPYYIER=true; shift ;;
         --yes|-y)
