@@ -56,19 +56,21 @@ If the env already exists it is activated immediately — no reinstall, no promp
 ### Options
 
 ```
---name NAME      named global env: $HOME/.henvs/NAME
---global         explicit global default (same as no LOCATION)
---python PATH    explicit Python interpreter
---run CMD ...    run CMD inside the env (no interactive subshell)
---update         self-update henv from GitHub
---install        install henv to ~/.local/bin
---print-activate emit shell commands for eval (parent-shell activation)
---list           list envs under $HOME/.henvs/
---delete         delete the resolved env
---no-heppyyier   skip heppyyier install prompt on first creation
---yes / -y       non-interactive; auto-answer yes to all prompts
---version        print version
--h / --help      usage
+--name NAME                  named global env: $HOME/.henvs/NAME
+--global                     explicit global default (same as no LOCATION)
+--python PATH                explicit Python interpreter
+--packages-dir PATH          set HEPPYYIER_PACKAGES_DIR in the activated shell
+--system-packages-dir PATH   set HEPPYYIER_SYSTEM_PACKAGES_DIR (read-only shared base)
+--run CMD ...                run CMD inside the env (no interactive subshell)
+--update                     self-update henv from GitHub
+--install                    install henv to ~/.local/bin
+--print-activate             emit shell commands for eval (parent-shell activation)
+--list                       list envs under $HOME/.henvs/
+--delete                     delete the resolved env
+--no-heppyyier               skip heppyyier install prompt on first creation
+--yes / -y                   non-interactive; auto-answer yes to all prompts
+--version                    print version
+-h / --help                  usage
 ```
 
 ---
@@ -200,6 +202,65 @@ henv --update
 Downloads the latest script from GitHub and replaces the current installation.
 Works for curl-installed copies. If you installed from a git clone, use
 `git pull` in the repo directory instead.
+
+---
+
+## Package sharing on HPC / shared filesystems
+
+`henv` can set `HEPPYYIER_PACKAGES_DIR` and `HEPPYYIER_SYSTEM_PACKAGES_DIR`
+automatically so the activated shell knows where heppyyier's package store lives.
+
+### Flags
+
+```
+--packages-dir PATH        set HEPPYYIER_PACKAGES_DIR (your writable package store)
+--system-packages-dir PATH set HEPPYYIER_SYSTEM_PACKAGES_DIR (read-only shared base)
+```
+
+### Auto-detection from `.heppyyier.toml`
+
+If a `.heppyyier.toml` file exists in the current directory, `henv` reads it:
+
+```toml
+# .heppyyier.toml
+packages_dir        = "~/.heppyyier_packages"
+system_packages_dir = "/shared/hep/packages"
+```
+
+Flags take precedence over the TOML file.
+
+### Workflows
+
+**Single user, custom packages dir:**
+```bash
+henv --packages-dir /scratch/$USER/hep_packages .
+# → HEPPYYIER_PACKAGES_DIR=/scratch/$USER/hep_packages in the subshell
+```
+
+**Admin builds once, users share (read-only):**
+```bash
+# Admin (once):
+export HEPPYYIER_PACKAGES_DIR=/shared/hep/packages
+heyy install fastjet hepmc3 pythia8 cppyy --force
+
+# Each user (no compilation):
+henv --packages-dir ~/.heppyyier --system-packages-dir /shared/hep/packages .
+# Inside subshell:
+#   HEPPYYIER_PACKAGES_DIR        = ~/.heppyyier       (writable — your own packages)
+#   HEPPYYIER_SYSTEM_PACKAGES_DIR = /shared/hep/packages (read-only — admin packages)
+#
+# heyy list         shows both shared and personal packages
+# heyy install pkg  installs to ~/.heppyyier only
+# import fastjet    resolves from the shared prefix automatically
+```
+
+**Parent-shell activation with shared packages:**
+```bash
+eval "$(henv --system-packages-dir /shared/hep/packages --print-activate .)"
+```
+
+See [WORKFLOW-EXAMPLE.md](https://github.com/matplo/heppyyier/blob/main/WORKFLOW-EXAMPLE.md)
+in the heppyyier repository for full step-by-step examples.
 
 ---
 
