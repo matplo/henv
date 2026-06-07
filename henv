@@ -289,7 +289,28 @@ cmd_run() {
     resolve_env_path
     [ "$HENV_IS_NEW" = true ] && create_env
     [ "${#HENV_RUN_ARGS[@]}" -gt 0 ] || die "--run requires a command"
-    bash -c "source \"$HENV_PATH/bin/activate\" && $(printf '%q ' "${HENV_RUN_ARGS[@]}")"
+    local tmpfile
+    tmpfile=$(mktemp /tmp/henv_run.XXXXXX)
+    cat > "$tmpfile" <<INITEOF
+rm -f "$tmpfile"
+if [ -f "\$HOME/.bashrc" ]; then
+    source "\$HOME/.bashrc" 2>/dev/null
+elif [ -f "\$HOME/.bash_profile" ]; then
+    source "\$HOME/.bash_profile" 2>/dev/null
+fi
+source "$HENV_PATH/bin/activate"
+${HENV_PACKAGES_DIR:+export HEPPYYIER_PACKAGES_DIR="$HENV_PACKAGES_DIR"}
+${HENV_SYSTEM_PACKAGES_DIR:+export HEPPYYIER_SYSTEM_PACKAGES_DIR="$HENV_SYSTEM_PACKAGES_DIR"}
+export HENV_ACTIVE="$HENV_LABEL"
+export HENV_PATH="$HENV_PATH"
+if [ -x "$HENV_PATH/bin/heyy" ]; then
+    "$HENV_PATH/bin/heyy" generate-modules >/dev/null 2>&1 || true
+    if command -v module >/dev/null 2>&1; then
+        eval "\$($HENV_PATH/bin/heyy modules 2>/dev/null)" 2>/dev/null
+    fi
+fi
+INITEOF
+    bash -c "source \"$tmpfile\" && $(printf '%q ' "${HENV_RUN_ARGS[@]}")"
 }
 
 cmd_update() {
