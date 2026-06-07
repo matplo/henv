@@ -159,15 +159,23 @@ Skip with `--no-heppyyier`:
 henv . --no-heppyyier
 ```
 
-Every time you enter the subshell, if `heyy` is present:
-- Tab completion for `heyy` / `her` / `heppyyier` is enabled
+Every time you enter the subshell or use `--run`, if `heyy` is present:
 - TCL modulefiles are regenerated for all installed packages (`heyy generate-modules`)
 - If a `module` command (Lmod / Environment Modules) is available, the modulefiles
   directory is registered with `module use` so `module load fastjet/3.5.1` works
 
+Additionally in the interactive subshell:
+- Tab completion for `heyy` / `her` / `heppyyier` is enabled
+
 ---
 
 ## Running commands
+
+`--run` performs the same full initialization as the interactive subshell: sources
+the shell rc (for `module` function availability), activates the venv, sets
+`HEPPYYIER_PACKAGES_DIR` / `HEPPYYIER_SYSTEM_PACKAGES_DIR`, regenerates TCL modulefiles,
+and registers the modulefiles directory with `module use`. Module commands therefore
+work as expected inside `--run`:
 
 ```bash
 # Run a script in the env without entering a subshell
@@ -179,6 +187,10 @@ henv --name hep2026 --run python -c "import fastjet; print('ok')"
 # Check what is installed
 henv . --run pip list
 henv . --run heyy list
+
+# Module commands work — same as inside the interactive subshell
+henv . --run module avail
+henv . --run module list
 ```
 
 ---
