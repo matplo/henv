@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # henv — HEP virtual environment manager
 # https://github.com/matplo/henv
-HENV_VERSION="0.2.0"
+HENV_VERSION="0.2.1"
 HENV_SCRIPT_URL="https://raw.githubusercontent.com/matplo/henv/main/henv"
 HENV_DEFAULT_DIR="$HOME/.henvs"
 HENV_HEPPYYIER_GITHUB="git+https://github.com/matplo/heppyyier.git"
@@ -266,6 +266,12 @@ if [ -x "$HENV_PATH/bin/heyy" ]; then
         eval "\$($HENV_PATH/bin/heyy modules 2>/dev/null)" 2>/dev/null
     fi
 fi
+INITEOF
+
+    # Banner is generated (or skipped) here, at write time, since the child
+    # bash process doesn't share HENV_QUIET / the info() function.
+    if [ "$HENV_QUIET" != true ]; then
+        cat >> "$tmpfile" <<INITEOF
 # Banner
 echo ""
 echo "[henv] active : $HENV_LABEL"
@@ -277,6 +283,7 @@ fi
 echo "[henv] type 'exit' or Ctrl-D to deactivate"
 echo ""
 INITEOF
+    fi
 
     exec bash --init-file "$tmpfile"
 }
