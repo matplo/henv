@@ -66,9 +66,13 @@ If the env already exists it is activated immediately — no reinstall, no promp
 --install                    install henv to ~/.local/bin
 --print-activate             emit shell commands for eval (parent-shell activation)
 --list                       list envs under $HOME/.henvs/
+--list --json                list envs as a JSON array
 --delete                     delete the resolved env
+--info                       print diagnostics for the resolved env
+--recreate                   delete and rebuild the resolved env before activating/running
 --no-heppyyier               skip heppyyier install prompt on first creation
 --yes / -y                   non-interactive; auto-answer yes to all prompts
+--quiet / -q                 suppress [henv] info banners (warnings/errors still shown)
 --version                    print version
 -h / --help                  usage
 ```
@@ -200,8 +204,17 @@ henv . --run module list
 
 ```bash
 henv --list                    # list all global envs
+henv --list --json             # same, as a JSON array (for scripting/tooling)
+henv --name old-env --info     # path, python version, size, heyy version/packages
 henv --name old-env --delete   # delete an env (prompts for confirmation)
 henv --name old-env --delete --yes   # skip prompt
+henv --name old-env --recreate --yes # delete and rebuild in one step
+```
+
+`--quiet` (or `-q`) suppresses the `[henv]` info banners — useful when scripting
+`--run`/`-x`:
+```bash
+henv . -q -x pip list
 ```
 
 ---
@@ -215,6 +228,9 @@ henv --update
 Downloads the latest script from GitHub and replaces the current installation.
 Works for curl-installed copies. If you installed from a git clone, use
 `git pull` in the repo directory instead.
+
+The previous version is backed up alongside it (e.g. `~/.local/bin/henv.bak`)
+before the overwrite, so a bad update can be undone with `mv henv.bak henv`.
 
 ---
 
@@ -283,3 +299,15 @@ in the heppyyier repository for full step-by-step examples.
 - Python 3.8+
 - `curl` (for `--update` and `--install`)
 - One of: `uv`, `virtualenv`, or `python3 -m venv` (stdlib)
+
+---
+
+## Development
+
+```bash
+bash -n henv          # syntax check
+shellcheck henv       # lint
+bash test/smoke.sh    # functional smoke test (runs against a temp $HOME)
+```
+
+CI (`.github/workflows/ci.yml`) runs all three on every push/PR to `main`.
