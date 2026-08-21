@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # henv — HEP virtual environment manager
 # https://github.com/matplo/henv
-HENV_VERSION="0.1.1"
+HENV_VERSION="0.1.2"
 HENV_SCRIPT_URL="https://raw.githubusercontent.com/matplo/henv/main/henv"
 HENV_DEFAULT_DIR="$HOME/.henvs"
 HENV_HEPPYYIER_GITHUB="git+https://github.com/matplo/heppyyier.git"
@@ -436,7 +436,7 @@ OPTIONS:
   --name NAME      named global env: $HOME/.henvs/NAME
   --global         explicit global default (same as no LOCATION)
   --python PATH    explicit Python interpreter
-  --run CMD ...    run CMD inside env, no interactive subshell
+  --run CMD ... / -x CMD ...   run CMD inside env, no interactive subshell
   --update         self-update henv from GitHub
   --install        install henv to ~/.local/bin (for piped curl usage)
   --print-activate emit 'source ...' lines for eval
@@ -511,6 +511,9 @@ while [ $# -gt 0 ]; do
         --global)
             shift ;;
         --run)
+            HENV_SUBCOMMAND="run"; shift
+            HENV_RUN_ARGS=("$@"); break ;;
+        -x)
             HENV_SUBCOMMAND="run"; shift
             HENV_RUN_ARGS=("$@"); break ;;
         --update)

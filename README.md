@@ -61,7 +61,7 @@ If the env already exists it is activated immediately — no reinstall, no promp
 --python PATH                explicit Python interpreter
 --packages-dir PATH          set HEPPYYIER_PACKAGES_DIR in the activated shell
 --system-packages-dir PATH   set HEPPYYIER_SYSTEM_PACKAGES_DIR (read-only shared base)
---run CMD ...                run CMD inside the env (no interactive subshell)
+--run CMD ... / -x CMD ...   run CMD inside the env (no interactive subshell)
 --update                     self-update henv from GitHub
 --install                    install henv to ~/.local/bin
 --print-activate             emit shell commands for eval (parent-shell activation)
@@ -171,7 +171,7 @@ Additionally in the interactive subshell:
 
 ## Running commands
 
-`--run` performs the same full initialization as the interactive subshell: sources
+`--run` (or its short alias `-x`) performs the same full initialization as the interactive subshell: sources
 the shell rc (for `module` function availability), activates the venv, sets
 `HEPPYYIER_PACKAGES_DIR` / `HEPPYYIER_SYSTEM_PACKAGES_DIR`, regenerates TCL modulefiles,
 and registers the modulefiles directory with `module use`. Module commands therefore
@@ -180,6 +180,7 @@ work as expected inside `--run`:
 ```bash
 # Run a script in the env without entering a subshell
 henv . --run python analysis.py
+henv . -x python analysis.py          # -x is a short alias for --run
 
 # Run a one-liner
 henv --name hep2026 --run python -c "import fastjet; print('ok')"
