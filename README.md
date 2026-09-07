@@ -385,6 +385,13 @@ henv --packages-dir ~/.hepyy --system-packages-dir /shared/hep/packages .
 # import fastjet    resolves from the shared prefix automatically
 ```
 
+> **macOS + cppyy:** cppyy has to be built from source there (~10-30 min) to
+> get a `cling` that can parse the current SDK's headers — see
+> [Fixing a broken binary cppyy wheel](#fixing-a-broken-binary-cppyy-wheel)
+> below. Building it once into a shared `--system-packages-dir` this way
+> makes that a one-time cost instead of paying it on every `henv`-created
+> env.
+
 **Parent-shell activation with shared packages:**
 ```bash
 eval "$(henv --system-packages-dir /shared/hep/packages --print-activate .)"
@@ -411,6 +418,22 @@ It only acts when a `cppyy` entry is found in the system dir's
 `--fix-cppyy`) to force the removal regardless. This is unrelated to
 `heyy`'s own `fix-cppyy` command, which repairs broken library paths in an
 already-installed cppyy rather than swap it out for a different build.
+
+**On macOS specifically**, the binary wheel's `cling` (LLVM 16) can't parse
+the C++ headers in current macOS SDKs, so the very first `import cppyy`
+crashes while building its precompiled-header cache — `heyy` warns about
+this before it happens (pointing at the fix below) rather than leaving you
+to decode the crash. Build a working one from source, once, into a shared
+dir, then point every env at it:
+
+```bash
+export HEPYY_PACKAGES_DIR=/shared/hep/packages   # or e.g. ~/.hepyy_shared for a single machine
+heyy install cppyy --force                        # ~10-30 min, one-time; builds cling
+                                                    #   pinned to an older, compatible SDK
+
+henv --system-packages-dir /shared/hep/packages --fix-cppyy   # existing env
+henv --system-packages-dir /shared/hep/packages .             # new envs — instant, no rebuild
+```
 
 ---
 
