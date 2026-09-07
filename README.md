@@ -246,17 +246,37 @@ cd / && henv --name backend --info   # finds it from any directory
 cd / && henv -n backend              # activates it from any directory
 ```
 
-A name derived from a location (or `"default"`) that would collide with a
-*different* path already registered under that name is refused — pass
-`--name` explicitly to give the new env a distinct name instead. An explicit
-`--name` is always authoritative: it re-points the registry if the name
-already pointed elsewhere, printing an info line when it does so a typo
-doesn't silently orphan an env.
+A name derived from a location that would collide with a *different* path
+already registered under that name is refused — pass `--name` explicitly to
+give the new env a distinct name instead. `--name` (explicit, or the bare
+`henv`/`henv --name default` case) is always authoritative: it re-points the
+registry if the name already pointed elsewhere, printing an info line when
+it does so a typo doesn't silently orphan an env.
 
 ```bash
 # Give a local env a name other than its directory's basename:
 henv --name analysis-2026 ~/scratch/run-42
 ```
+
+If you move an env's directory yourself with a plain `mv` (use
+[`--mv`](#moving-an-env) instead — see why below), henv has no way to know:
+the registry entry is left pointing at the now-gone old path, and there's no
+"old" env left to run `--mv` against. Just hand-edit
+`$HOME/.henvs/registry.json` to point the name at the new location — it's a
+plain JSON file, `{"NAME": {"path": "..."}, ...}`, safe to edit directly as
+long as it stays valid JSON:
+```bash
+python3 -c "
+import json
+p = '$HOME/.henvs/registry.json'
+d = json.load(open(p))
+d['NAME']['path'] = '/the/new/path'
+json.dump(d, open(p, 'w'), indent=2)
+"
+```
+Note this only fixes henv's bookkeeping — a hand-moved venv still has the
+absolute-path problems described below, which is exactly why `--mv` doesn't
+just move the directory either.
 
 Concurrency: the registry is a plain JSON file, read-modify-written with no
 locking. Fine for a personal/lab CLI used by one person at a time; two `henv`

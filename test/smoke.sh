@@ -158,6 +158,17 @@ assert_contains "--name resolves through the registry after --mv" \
     bash "$HENV" --name regtest --info
 bash "$HENV" --name regtest --delete --yes >/dev/null 2>&1
 
+# Bare 'henv' (no --name, no location) must also resolve through the
+# registry for "default" — regression test for a bug where it always
+# hardcoded $HOME/.henvs/default and ignored a --mv'd (or hand-edited)
+# registry entry pointing elsewhere.
+bash "$HENV" --no-hepyy -y --run true >/dev/null 2>&1
+assert_success "bare henv --mv relocates the default env" \
+    bash "$HENV" --mv "$HOME/newloc/default-env" --yes --no-hepyy
+assert_contains "bare henv resolves the moved default env" \
+    "$HOME/newloc/default-env" \
+    bash "$HENV" --info
+
 # --quiet suppresses [henv] info banners
 out="$(bash "$HENV" --name citest -q --run true 2>&1)"
 if [ -z "$out" ]; then

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # henv — HEP virtual environment manager
 # https://github.com/matplo/henv
-HENV_VERSION="0.5.0"
+HENV_VERSION="0.5.1"
 HENV_SCRIPT_URL="https://raw.githubusercontent.com/matplo/henv/main/henv"
 HENV_DEFAULT_DIR="$HOME/.henvs"
 
@@ -176,6 +176,12 @@ detect_tool() {
 # ─── Env path resolution ──────────────────────────────────────────────────────
 
 resolve_env_path() {
+    # No --name and no location is just "the env named 'default'" — fold it
+    # into the --name branch below so it goes through the registry lookup
+    # too (a moved/relocated default env is found the same way any other
+    # named env would be, instead of always hardcoding $HENV_DEFAULT_DIR/default).
+    [ -n "$HENV_NAME" ] || [ -n "$HENV_LOCATION" ] || HENV_NAME="default"
+
     if [ -n "$HENV_NAME" ]; then
         case "$HENV_NAME" in
             */*|.|..) die "Invalid --name: '$HENV_NAME' (must be a plain name, no '/' or '..')" ;;
@@ -206,15 +212,12 @@ resolve_env_path() {
         registered=$(_registry_get "$HENV_NAME") || true
         HENV_PATH="${registered:-$HENV_DEFAULT_DIR/$HENV_NAME}"
         HENV_LABEL="$HENV_NAME"
-    else
-        HENV_PATH="$HENV_DEFAULT_DIR/default"
-        HENV_LABEL="default"
     fi
 
-    # Reconcile against the registry. An explicit --name is always
-    # authoritative and re-points the registry entry; a name derived from a
-    # location (or the bare "default") refuses to silently collide with an
-    # existing, differently-pathed registration — the caller has to pass
+    # Reconcile against the registry. --name (explicit, or defaulted to
+    # "default" above) is always authoritative and re-points the registry
+    # entry; a name derived from a location refuses to silently collide with
+    # an existing, differently-pathed registration — the caller has to pass
     # --name to pick a distinct name instead.
     local existing
     existing=$(_registry_get "$HENV_LABEL") || true
