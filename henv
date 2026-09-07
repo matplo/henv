@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # henv — HEP virtual environment manager
 # https://github.com/matplo/henv
-HENV_VERSION="0.2.1"
+HENV_VERSION="0.3.0"
 HENV_SCRIPT_URL="https://raw.githubusercontent.com/matplo/henv/main/henv"
 HENV_DEFAULT_DIR="$HOME/.henvs"
-HENV_HEPPYYIER_GITHUB="git+https://github.com/matplo/heppyyier.git"
 
 # ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -13,25 +12,9 @@ info() { [ "$HENV_QUIET" = true ] || echo "[henv] $*"; }
 warn() { echo "[henv] WARNING: $*" >&2; }
 command_exists() { command -v "$1" >/dev/null 2>&1; }
 
-_system_has_cppyy() {
-    # Returns true only when HENV_SYSTEM_PACKAGES_DIR is set AND its registry.json
-    # contains a cppyy entry built with --target (i.e. a cppyy/ package dir exists
-    # directly in the registered prefix).
-    [ -n "$HENV_SYSTEM_PACKAGES_DIR" ] || return 1
-    local reg="$HENV_SYSTEM_PACKAGES_DIR/registry.json"
-    grep -q '"cppyy"' "$reg" 2>/dev/null || return 1
-    local prefix
-    prefix=$(python3 -c "
-import json
-d=json.load(open('$reg'))
-print(d.get('packages',{}).get('cppyy',{}).get('prefix',''))
-" 2>/dev/null)
-    [ -n "$prefix" ] && [ -d "$prefix/cppyy" ]
-}
-
 _read_toml_key() {
     # Extract a simple string value from a TOML file: key = "value" or key = 'value'
-    local key="$1" toml="${2:-.heppyyier.toml}"
+    local key="$1" toml="${2:-.hepyy.toml}"
     [ -f "$toml" ] || return 0
     grep -E "^\s*${key}\s*=" "$toml" \
         | head -1 \
@@ -103,7 +86,7 @@ resolve_env_path() {
         HENV_IS_NEW=true
     fi
 
-    # Auto-detect packages dirs from .heppyyier.toml in CWD (flags take precedence)
+    # Auto-detect packages dirs from .hepyy.toml in CWD (flags take precedence)
     if [ -z "$HENV_PACKAGES_DIR" ]; then
         HENV_PACKAGES_DIR=$(_read_toml_key packages_dir) || true
     fi
@@ -143,7 +126,6 @@ create_env() {
             "$HENV_PYTHON" -m venv "$HENV_PATH" || die "python -m venv failed" ;;
     esac
     bootstrap_pip
-    [ "$HENV_NO_HEPPYYIER" = true ] || prompt_heppyyier
 }
 
 bootstrap_pip() {
@@ -166,72 +148,6 @@ bootstrap_pip() {
         || warn "pip upgrade failed (non-fatal)"
 }
 
-prompt_heppyyier() {
-    local answer
-    if [ "$HENV_YES" = true ]; then
-        answer="y"
-    else
-        printf "[henv] Install heppyyier (provides 'heyy install fastjet ...')? [Y/n] "
-        read -r answer
-        answer="${answer:-y}"
-    fi
-    case "$answer" in
-        y|Y|yes|YES) install_heppyyier ;;
-        *) info "Skipping heppyyier (run 'pip install heppyyier' later)" ;;
-    esac
-}
-
-install_heppyyier() {
-    info "Installing heppyyier..."
-    local installed=false
-    if [ "$HENV_TOOL" = "uv" ]; then
-        if uv pip install --python "$HENV_PATH" heppyyier 2>/dev/null; then
-            installed=true
-        else
-            info "PyPI not available, installing from GitHub..."
-            uv pip install --python "$HENV_PATH" "$HENV_HEPPYYIER_GITHUB" \
-                && installed=true
-        fi
-    else
-        if "$HENV_PATH/bin/pip" install heppyyier 2>/dev/null; then
-            installed=true
-        else
-            info "PyPI not available, installing from GitHub..."
-            "$HENV_PATH/bin/pip" install "$HENV_HEPPYYIER_GITHUB" \
-                && installed=true
-        fi
-    fi
-    [ "$installed" = true ] || { warn "heppyyier install failed from both PyPI and GitHub"; return; }
-
-    # Remove the binary cppyy wheel when --no-cppyy is set explicitly, or when
-    # the system packages dir already provides a heppyyier-built cppyy
-    # (auto-detected via _system_has_cppyy: registry entry + cppyy/ dir in prefix).
-    # On HPC this avoids the broken binary wheel; system cppyy is used instead
-    # via _ensure_cppyy_on_syspath() in heppyyier's loader.
-    if [ "$HENV_NO_CPPYY" = true ] || _system_has_cppyy; then
-        if [ "$HENV_NO_CPPYY" = true ]; then
-            info "Removing binary cppyy wheel (--no-cppyy)"
-        else
-            info "Removing binary cppyy wheel (system cppyy found in $HENV_SYSTEM_PACKAGES_DIR)"
-        fi
-        if [ "$HENV_TOOL" = "uv" ]; then
-            uv pip uninstall --python "$HENV_PATH" \
-                cppyy cppyy-backend cppyy-cling CPyCppyy 2>/dev/null || true
-        else
-            "$HENV_PATH/bin/pip" uninstall -y \
-                cppyy cppyy-backend cppyy-cling CPyCppyy 2>/dev/null || true
-        fi
-    fi
-
-    local heyy="$HENV_PATH/bin/heyy"
-    if [ -x "$heyy" ]; then
-        info "Running heyy init..."
-        "$heyy" init || warn "heyy init failed (non-fatal)"
-    else
-        warn "heyy not found after install — skipping heyy init"
-    fi
-}
-
 # ─── Activation ───────────────────────────────────────────────────────────────
 
 launch_subshell() {
@@ -249,15 +165,15 @@ elif [ -f "\$HOME/.bash_profile" ]; then
 fi
 # Activate the venv
 source "$HENV_PATH/bin/activate"
-${HENV_PACKAGES_DIR:+export HEPPYYIER_PACKAGES_DIR="$HENV_PACKAGES_DIR"}
-${HENV_SYSTEM_PACKAGES_DIR:+export HEPPYYIER_SYSTEM_PACKAGES_DIR="$HENV_SYSTEM_PACKAGES_DIR"}
+${HENV_PACKAGES_DIR:+export HEPYY_PACKAGES_DIR="$HENV_PACKAGES_DIR"}
+${HENV_SYSTEM_PACKAGES_DIR:+export HEPYY_SYSTEM_PACKAGES_DIR="$HENV_SYSTEM_PACKAGES_DIR"}
 # Decorate prompt and export markers
 export HENV_ACTIVE="$HENV_LABEL"
 export HENV_PATH="$HENV_PATH"
 PS1="(henv:$HENV_LABEL) \$PS1"
 # Wire up heyy tools if available
 if [ -x "$HENV_PATH/bin/heyy" ]; then
-    # Tab completion for heyy/her/heppyyier
+    # Tab completion for hepyy/heyy/her
     eval "\$($HENV_PATH/bin/heyy completion --shell bash 2>/dev/null)" 2>/dev/null
     # Regenerate TCL modulefiles for installed packages (silent; no-op if none)
     "$HENV_PATH/bin/heyy" generate-modules >/dev/null 2>&1 || true
@@ -293,8 +209,8 @@ cmd_print_activate() {
     maybe_recreate
     [ "$HENV_IS_NEW" = true ] && create_env
     echo "source \"$HENV_PATH/bin/activate\""
-    [ -n "$HENV_PACKAGES_DIR" ]        && echo "export HEPPYYIER_PACKAGES_DIR=\"$HENV_PACKAGES_DIR\""
-    [ -n "$HENV_SYSTEM_PACKAGES_DIR" ] && echo "export HEPPYYIER_SYSTEM_PACKAGES_DIR=\"$HENV_SYSTEM_PACKAGES_DIR\""
+    [ -n "$HENV_PACKAGES_DIR" ]        && echo "export HEPYY_PACKAGES_DIR=\"$HENV_PACKAGES_DIR\""
+    [ -n "$HENV_SYSTEM_PACKAGES_DIR" ] && echo "export HEPYY_SYSTEM_PACKAGES_DIR=\"$HENV_SYSTEM_PACKAGES_DIR\""
     echo "export HENV_ACTIVE=\"$HENV_LABEL\""
     echo "export HENV_PATH=\"$HENV_PATH\""
     echo "PS1=\"(henv:$HENV_LABEL) \$PS1\""
@@ -333,8 +249,8 @@ elif [ -f "\$HOME/.bash_profile" ]; then
     source "\$HOME/.bash_profile" 2>/dev/null
 fi
 source "$HENV_PATH/bin/activate"
-${HENV_PACKAGES_DIR:+export HEPPYYIER_PACKAGES_DIR="$HENV_PACKAGES_DIR"}
-${HENV_SYSTEM_PACKAGES_DIR:+export HEPPYYIER_SYSTEM_PACKAGES_DIR="$HENV_SYSTEM_PACKAGES_DIR"}
+${HENV_PACKAGES_DIR:+export HEPYY_PACKAGES_DIR="$HENV_PACKAGES_DIR"}
+${HENV_SYSTEM_PACKAGES_DIR:+export HEPYY_SYSTEM_PACKAGES_DIR="$HENV_SYSTEM_PACKAGES_DIR"}
 export HENV_ACTIVE="$HENV_LABEL"
 export HENV_PATH="$HENV_PATH"
 if [ -x "$HENV_PATH/bin/heyy" ]; then
@@ -513,24 +429,25 @@ OPTIONS:
   --delete         delete the resolved env
   --info           print diagnostics for the resolved env (path, python, size, heyy)
   --recreate       delete and rebuild the resolved env before activating/running
-  --packages-dir PATH        set HEPPYYIER_PACKAGES_DIR (user-writable package store)
-  --system-packages-dir PATH set HEPPYYIER_SYSTEM_PACKAGES_DIR (read-only shared base)
-  --no-cppyy                 uninstall binary cppyy wheel after heppyyier install
-                             (auto-applied when system-packages-dir has heppyyier cppyy)
-  --no-heppyyier             skip heppyyier install prompt on first creation
+  --packages-dir PATH        set HEPYY_PACKAGES_DIR (user-writable package store)
+  --system-packages-dir PATH set HEPYY_SYSTEM_PACKAGES_DIR (read-only shared base)
   --yes / -y                 non-interactive; auto-answer yes to prompts
   --quiet / -q               suppress [henv] info banners (warnings/errors still shown)
   --version                  print version string
   -h / --help                this help
 
+heyy (https://pypi.org/project/hepyy/) is not installed by henv — it's a plain
+'pip install hepyy' inside the activated env if you want it. henv will wire up
+its completion/modulefiles automatically whenever it's present in the venv.
+
 PACKAGE SHARING (HPC / shared filesystems):
   henv --system-packages-dir /shared/hep/packages .
-    # User packages go to .venv/heppyyier_packages/ (writable)
+    # User packages go to .venv/hepyy_packages/ (writable)
     # Shared pre-built packages are visible read-only from /shared/hep/packages
     # 'heyy install mypkg' writes to user dir; shared packages load from /shared/
 
-  # Or configure in .heppyyier.toml (auto-detected by henv):
-  #   packages_dir = "~/.heppyyier_packages"
+  # Or configure in .hepyy.toml (auto-detected by henv):
+  #   packages_dir = "~/.hepyy_packages"
   #   system_packages_dir = "/shared/hep/packages"
 
 EXAMPLES:
@@ -560,13 +477,11 @@ HENV_NAME=""
 HENV_LOCATION=""
 HENV_PYTHON_FLAG=""
 HENV_YES=false
-HENV_NO_HEPPYYIER=false
 HENV_SUBCOMMAND="activate"
 HENV_RUN_ARGS=()
 HENV_INSTALL_PREFIX=""
-HENV_PACKAGES_DIR="${HEPPYYIER_PACKAGES_DIR:-}"
-HENV_SYSTEM_PACKAGES_DIR="${HEPPYYIER_SYSTEM_PACKAGES_DIR:-}"
-HENV_NO_CPPYY=false
+HENV_PACKAGES_DIR="${HEPYY_PACKAGES_DIR:-}"
+HENV_SYSTEM_PACKAGES_DIR="${HEPYY_SYSTEM_PACKAGES_DIR:-}"
 HENV_RECREATE=false
 HENV_QUIET=false
 HENV_JSON=false
@@ -620,10 +535,6 @@ while [ $# -gt 0 ]; do
             HENV_SYSTEM_PACKAGES_DIR="$2"; shift 2 ;;
         --system-packages-dir=*)
             HENV_SYSTEM_PACKAGES_DIR="${1#--system-packages-dir=}"; shift ;;
-        --no-cppyy)
-            HENV_NO_CPPYY=true; shift ;;
-        --no-heppyyier)
-            HENV_NO_HEPPYYIER=true; shift ;;
         --yes|-y)
             HENV_YES=true; shift ;;
         --version)

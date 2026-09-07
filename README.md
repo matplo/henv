@@ -9,8 +9,8 @@ henv --name hep2026             # named global env
 henv . --run python script.py   # run without interactive subshell
 ```
 
-Designed for the [heppyyier](https://github.com/matplo/heppyyier) workflow: spin up a
-venv, install heppyyier, build HEP packages, analyse.
+Designed for the [hepyy](https://github.com/matplo/hepyy) workflow: spin up a
+venv, `pip install hepyy`, build HEP packages, analyse.
 
 ---
 
@@ -59,8 +59,8 @@ If the env already exists it is activated immediately — no reinstall, no promp
 --name NAME                  named global env: $HOME/.henvs/NAME
 --global                     explicit global default (same as no LOCATION)
 --python PATH                explicit Python interpreter
---packages-dir PATH          set HEPPYYIER_PACKAGES_DIR in the activated shell
---system-packages-dir PATH   set HEPPYYIER_SYSTEM_PACKAGES_DIR (read-only shared base)
+--packages-dir PATH          set HEPYY_PACKAGES_DIR in the activated shell
+--system-packages-dir PATH   set HEPYY_SYSTEM_PACKAGES_DIR (read-only shared base)
 --run CMD ... / -x CMD ...   run CMD inside the env (no interactive subshell)
 --update                     self-update henv from GitHub
 --install                    install henv to ~/.local/bin
@@ -70,7 +70,6 @@ If the env already exists it is activated immediately — no reinstall, no promp
 --delete                     delete the resolved env
 --info                       print diagnostics for the resolved env
 --recreate                   delete and rebuild the resolved env before activating/running
---no-heppyyier               skip heppyyier install prompt on first creation
 --yes / -y                   non-interactive; auto-answer yes to all prompts
 --quiet / -q                 suppress [henv] info banners (warnings/errors still shown)
 --version                    print version
@@ -82,13 +81,14 @@ If the env already exists it is activated immediately — no reinstall, no promp
 ## Typical session
 
 ```bash
-# Create a project-local env, install heppyyier, drop into it
+# Create a project-local env and drop into it
 cd ~/myanalysis
 henv .
-# → creates .venv, asks about heppyyier, activates subshell
+# → creates .venv, activates subshell
 # → PS1 shows: (henv:myanalysis) ...
 
-heyy install fastjet hepmc3 pythia8   # inside the subshell
+pip install hepyy                     # one-time, inside the subshell
+heyy install fastjet hepmc3 pythia8
 python my_analysis.py
 exit                                   # back to parent shell
 
@@ -147,29 +147,26 @@ Override the interpreter with `--python /path/to/python3.11`.
 
 ---
 
-## heppyyier integration
+## hepyy integration
 
-On first creation, `henv` prompts:
-```
-[henv] Install heppyyier (provides 'heyy install fastjet ...')? [Y/n]
-```
+`henv` does **not** install [hepyy](https://pypi.org/project/hepyy/) itself — it's
+a plain `pip install hepyy` now that it's on PyPI, so there's no need for henv to
+prompt for it or manage a GitHub fallback:
 
-Answering yes installs `heppyyier` (tries PyPI first, falls back to GitHub) and runs
-`heyy init` to set up the recipe cache and package store inside the new venv.
-The cppyy backend is automatically patched if it has broken library paths.
-
-Skip with `--no-heppyyier`:
 ```bash
-henv . --no-heppyyier
+henv .                 # activate the env
+pip install hepyy       # one-time
+heyy init
 ```
 
-Every time you enter the subshell or use `--run`, if `heyy` is present:
+Whenever `heyy` (or its aliases `hepyy` / `her`) is present in the venv, `henv`
+wires it up automatically — every time you enter the subshell or use `--run`:
 - TCL modulefiles are regenerated for all installed packages (`heyy generate-modules`)
 - If a `module` command (Lmod / Environment Modules) is available, the modulefiles
   directory is registered with `module use` so `module load fastjet/3.5.1` works
 
 Additionally in the interactive subshell:
-- Tab completion for `heyy` / `her` / `heppyyier` is enabled
+- Tab completion for `heyy` / `hepyy` / `her` is enabled
 
 ---
 
@@ -177,7 +174,7 @@ Additionally in the interactive subshell:
 
 `--run` (or its short alias `-x`) performs the same full initialization as the interactive subshell: sources
 the shell rc (for `module` function availability), activates the venv, sets
-`HEPPYYIER_PACKAGES_DIR` / `HEPPYYIER_SYSTEM_PACKAGES_DIR`, regenerates TCL modulefiles,
+`HEPYY_PACKAGES_DIR` / `HEPYY_SYSTEM_PACKAGES_DIR`, regenerates TCL modulefiles,
 and registers the modulefiles directory with `module use`. Module commands therefore
 work as expected inside `--run`:
 
@@ -236,23 +233,23 @@ before the overwrite, so a bad update can be undone with `mv henv.bak henv`.
 
 ## Package sharing on HPC / shared filesystems
 
-`henv` can set `HEPPYYIER_PACKAGES_DIR` and `HEPPYYIER_SYSTEM_PACKAGES_DIR`
-automatically so the activated shell knows where heppyyier's package store lives.
+`henv` can set `HEPYY_PACKAGES_DIR` and `HEPYY_SYSTEM_PACKAGES_DIR`
+automatically so the activated shell knows where hepyy's package store lives.
 
 ### Flags
 
 ```
---packages-dir PATH        set HEPPYYIER_PACKAGES_DIR (your writable package store)
---system-packages-dir PATH set HEPPYYIER_SYSTEM_PACKAGES_DIR (read-only shared base)
+--packages-dir PATH        set HEPYY_PACKAGES_DIR (your writable package store)
+--system-packages-dir PATH set HEPYY_SYSTEM_PACKAGES_DIR (read-only shared base)
 ```
 
-### Auto-detection from `.heppyyier.toml`
+### Auto-detection from `.hepyy.toml`
 
-If a `.heppyyier.toml` file exists in the current directory, `henv` reads it:
+If a `.hepyy.toml` file exists in the current directory, `henv` reads it:
 
 ```toml
-# .heppyyier.toml
-packages_dir        = "~/.heppyyier_packages"
+# .hepyy.toml
+packages_dir        = "~/.hepyy_packages"
 system_packages_dir = "/shared/hep/packages"
 ```
 
@@ -263,23 +260,23 @@ Flags take precedence over the TOML file.
 **Single user, custom packages dir:**
 ```bash
 henv --packages-dir /scratch/$USER/hep_packages .
-# → HEPPYYIER_PACKAGES_DIR=/scratch/$USER/hep_packages in the subshell
+# → HEPYY_PACKAGES_DIR=/scratch/$USER/hep_packages in the subshell
 ```
 
 **Admin builds once, users share (read-only):**
 ```bash
 # Admin (once):
-export HEPPYYIER_PACKAGES_DIR=/shared/hep/packages
+export HEPYY_PACKAGES_DIR=/shared/hep/packages
 heyy install fastjet hepmc3 pythia8 cppyy --force
 
 # Each user (no compilation):
-henv --packages-dir ~/.heppyyier --system-packages-dir /shared/hep/packages .
+henv --packages-dir ~/.hepyy --system-packages-dir /shared/hep/packages .
 # Inside subshell:
-#   HEPPYYIER_PACKAGES_DIR        = ~/.heppyyier       (writable — your own packages)
-#   HEPPYYIER_SYSTEM_PACKAGES_DIR = /shared/hep/packages (read-only — admin packages)
+#   HEPYY_PACKAGES_DIR        = ~/.hepyy       (writable — your own packages)
+#   HEPYY_SYSTEM_PACKAGES_DIR = /shared/hep/packages (read-only — admin packages)
 #
 # heyy list         shows both shared and personal packages
-# heyy install pkg  installs to ~/.heppyyier only
+# heyy install pkg  installs to ~/.hepyy only
 # import fastjet    resolves from the shared prefix automatically
 ```
 
@@ -288,8 +285,8 @@ henv --packages-dir ~/.heppyyier --system-packages-dir /shared/hep/packages .
 eval "$(henv --system-packages-dir /shared/hep/packages --print-activate .)"
 ```
 
-See [WORKFLOW-EXAMPLE.md](https://github.com/matplo/heppyyier/blob/main/WORKFLOW-EXAMPLE.md)
-in the heppyyier repository for full step-by-step examples.
+See [WORKFLOW-EXAMPLE.md](https://github.com/matplo/hepyy/blob/main/WORKFLOW-EXAMPLE.md)
+in the hepyy repository for full step-by-step examples.
 
 ---
 

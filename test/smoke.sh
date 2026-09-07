@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # smoke.sh — dependency-free functional smoke test for henv.
 #
-# Runs against a fake $HOME so it never touches the real ~/.henvs, and uses
-# --no-heppyyier throughout so it stays fast/hermetic (no network calls).
+# Runs against a fake $HOME so it never touches the real ~/.henvs. henv no
+# longer installs anything beyond the venv itself, so this stays hermetic
+# (no network calls) without any extra flags.
 #
 # Usage: bash test/smoke.sh
 
@@ -65,7 +66,7 @@ assert_success  "--version exits 0"              bash "$HENV" --version
 assert_success  "--help exits 0"                 bash "$HENV" --help
 
 assert_contains "-x/--run print expected output" "hello" \
-    bash "$HENV" --name citest --no-heppyyier --run echo hello
+    bash "$HENV" --name citest --run echo hello
 if [ -f "$HOME/.henvs/citest/bin/activate" ]; then
     ok "env created at expected path"
 else
@@ -78,7 +79,7 @@ assert_contains "existing env activates + runs (-x alias)" "hello3" \
     bash "$HENV" --name citest -x echo hello3
 
 assert_contains "--recreate rebuilds the env" "Recreating env" \
-    bash "$HENV" --name citest --recreate --no-heppyyier --run true
+    bash "$HENV" --name citest --recreate --run true
 
 assert_contains "--list shows the env" "citest" \
     bash "$HENV" --list
