@@ -108,6 +108,56 @@ assert_contains "--fix-cppyy no-ops without a detected system cppyy" "nothing to
 assert_contains "--fix-cppyy --no-cppyy forces removal" "Removing binary cppyy wheel" \
     bash "$HENV" --name citest --fix-cppyy --no-cppyy
 
+assert_contains "-n is a short alias for --name" "hi4" \
+    bash "$HENV" -n citest --run echo hi4
+
+# --- Name registry: henv . registers a name; --name resolves it from anywhere ---
+
+mkdir -p "$HOME/proj/regtest" "$HOME/proj2/regtest" "$HOME/newloc"
+
+(cd "$HOME/proj/regtest" && bash "$HENV" . --no-hepyy -y --run true) \
+    >/tmp/smoke_out.$$ 2>&1
+if [ -f "$HOME/proj/regtest/.venv/bin/activate" ]; then
+    ok "henv . creates a local env and registers it"
+else
+    bad "henv . creates a local env and registers it"
+    # shellcheck disable=SC2001 # indenting multi-line output; ${//} can't do this per-line
+    sed 's/^/    /' /tmp/smoke_out.$$
+fi
+rm -f /tmp/smoke_out.$$
+
+assert_contains "--name resolves a registered local env from elsewhere" \
+    "$HOME/proj/regtest/.venv" \
+    bash "$HENV" --name regtest --info
+
+out="$(cd "$HOME/proj2/regtest" && bash "$HENV" . --no-hepyy -y --run true 2>&1)"
+if echo "$out" | grep -qF "already registered"; then
+    ok "a colliding derived name is refused"
+else
+    bad "a colliding derived name is refused"
+    # shellcheck disable=SC2001 # indenting multi-line output; ${//} can't do this per-line
+    echo "$out" | sed 's/^/    /'
+fi
+if [ ! -e "$HOME/proj2/regtest/.venv" ]; then
+    ok "the refused collision created nothing"
+else
+    bad "the refused collision created nothing"
+fi
+
+# --- --mv: recreate-in-place + registry update ---
+
+assert_success "--mv recreates the env at the new path" \
+    bash "$HENV" --name regtest --mv "$HOME/newloc/regtest-env" --yes --no-hepyy
+if [ -f "$HOME/newloc/regtest-env/bin/activate" ] && [ ! -d "$HOME/proj/regtest/.venv" ]; then
+    ok "--mv relocates the env and removes the old path"
+else
+    bad "--mv relocates the env and removes the old path"
+fi
+assert_contains "--name resolves through the registry after --mv" \
+    "$HOME/newloc/regtest-env" \
+    bash "$HENV" --name regtest --info
+bash "$HENV" --name regtest --delete --yes >/dev/null 2>&1
+
 # --quiet suppresses [henv] info banners
 out="$(bash "$HENV" --name citest -q --run true 2>&1)"
 if [ -z "$out" ]; then
@@ -134,6 +184,11 @@ if [ ! -d "$HOME/.henvs/citest" ]; then
     ok "env directory gone after --delete"
 else
     bad "env directory gone after --delete"
+fi
+if ! grep -qF '"citest"' "$HOME/.henvs/registry.json" 2>/dev/null; then
+    ok "registry entry removed after --delete"
+else
+    bad "registry entry removed after --delete"
 fi
 
 echo "=== $PASS passed, $FAIL failed ==="

@@ -6,6 +6,7 @@ Python virtual environments for HEP analysis workflows.
 ```
 henv .                          # create + activate local .venv
 henv --name hep2026             # named global env
+henv -n hep2026                 # -n is a short alias for --name
 henv . --run python script.py   # run without interactive subshell
 ```
 
@@ -43,20 +44,23 @@ henv [OPTIONS] [LOCATION]
 
 ### Location
 
-| Invocation | Env path |
-|------------|----------|
-| `henv` | `$HOME/.henvs/default` |
-| `henv .` | `$PWD/.venv` |
-| `henv /abs/path` | `/abs/path/.venv` |
-| `henv rel/path` | `$PWD/rel/path/.venv` |
-| `henv --name foo` | `$HOME/.henvs/foo` |
+| Invocation | Env path | Registered as |
+|------------|----------|---------------|
+| `henv` | `$HOME/.henvs/default` | `default` |
+| `henv .` | `$PWD/.venv` | basename of `$PWD` |
+| `henv /abs/path` | `/abs/path/.venv` | basename of `/abs/path` |
+| `henv rel/path` | `$PWD/rel/path/.venv` | basename of `rel/path` |
+| `henv --name foo` | registered path for `foo`, or `$HOME/.henvs/foo` if new | `foo` |
+| `henv --name foo .` | `$PWD/.venv` | `foo` (overrides the derived name) |
 
 If the env already exists it is activated immediately — no reinstall, no prompts.
+Every row above also registers the env under a name — see
+[Name registry](#name-registry) below.
 
 ### Options
 
 ```
---name NAME                  named global env: $HOME/.henvs/NAME
+--name NAME / -n NAME        named env: the registered path for NAME, or $HOME/.henvs/NAME if new
 --global                     explicit global default (same as no LOCATION)
 --python PATH                explicit Python interpreter
 --packages-dir PATH          set HEPYY_PACKAGES_DIR in the activated shell
@@ -65,11 +69,12 @@ If the env already exists it is activated immediately — no reinstall, no promp
 --update                     self-update henv from GitHub
 --install                    install henv to ~/.local/bin
 --print-activate             emit shell commands for eval (parent-shell activation)
---list                       list envs under $HOME/.henvs/
+--list                       list all known envs (registry + $HOME/.henvs/)
 --list --json                list envs as a JSON array
---delete                     delete the resolved env
+--delete                     delete the resolved env (and its registry entry)
 --info                       print diagnostics for the resolved env
 --recreate                   delete and rebuild the resolved env before activating/running
+--mv NEWPATH                 recreate the resolved env at NEWPATH and update the registry
 --fix-cppyy                  remove the venv's binary cppyy wheel if a system build is found
 --no-cppyy                   force --fix-cppyy's removal even without a detected system cppyy
 --no-hepyy / --nh            skip installing cppyy + hepyy on env creation
@@ -207,7 +212,7 @@ henv . --run module list
 ## Managing envs
 
 ```bash
-henv --list                    # list all global envs
+henv --list                    # list every known env: registry + $HOME/.henvs/
 henv --list --json             # same, as a JSON array (for scripting/tooling)
 henv --name old-env --info     # path, python version, size, heyy version/packages
 henv --name old-env --delete   # delete an env (prompts for confirmation)
@@ -220,6 +225,60 @@ henv --name old-env --recreate --yes # delete and rebuild in one step
 ```bash
 henv . -q -x pip list
 ```
+
+---
+
+## Name registry
+
+Every env — global (`--name`) or local (`henv .` / `henv path`) — is recorded
+in `$HOME/.henvs/registry.json` under a name (this is henv's own registry
+file, unrelated to the `registry.json` hepyy keeps inside a packages
+directory). The name is whatever `--name` gives explicitly, or otherwise the
+basename of the directory for a location, or `"default"` when neither is
+given.
+
+Once a name is registered, `--name`/`-n` resolves it from anywhere, not just
+from inside that directory:
+
+```bash
+cd ~/proj/backend && henv .          # registers 'backend' -> ~/proj/backend/.venv
+cd / && henv --name backend --info   # finds it from any directory
+cd / && henv -n backend              # activates it from any directory
+```
+
+A name derived from a location (or `"default"`) that would collide with a
+*different* path already registered under that name is refused — pass
+`--name` explicitly to give the new env a distinct name instead. An explicit
+`--name` is always authoritative: it re-points the registry if the name
+already pointed elsewhere, printing an info line when it does so a typo
+doesn't silently orphan an env.
+
+```bash
+# Give a local env a name other than its directory's basename:
+henv --name analysis-2026 ~/scratch/run-42
+```
+
+Concurrency: the registry is a plain JSON file, read-modify-written with no
+locking. Fine for a personal/lab CLI used by one person at a time; two `henv`
+invocations racing to register different names at the exact same instant
+could in principle clobber each other's write.
+
+## Moving an env
+
+```bash
+henv --name backend --mv /new/path/backend-env
+```
+
+This is **not** a byte-for-byte move. A venv bakes absolute paths into
+`bin/activate*` and into the shebang line of every installed script (and
+`cppyy`'s compiled libraries can embed absolute RPATHs too), so a plain `mv`
+of the directory would leave all of that pointing at a path that no longer
+exists. `--mv` instead deletes the old env and recreates a fresh one at the
+new path — `cppyy`/`hepyy` come back the same way they would for any new env
+— then updates the registry. **Packages installed beyond `cppyy`/`hepyy` are
+not preserved** — reinstall them after. Pass `--yes` if the destination
+already exists (it gets removed first) and `--no-hepyy` if you don't want
+`cppyy`/`hepyy` reinstalled at the new location.
 
 ---
 

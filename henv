@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # henv — HEP virtual environment manager
 # https://github.com/matplo/henv
-HENV_VERSION="0.4.0"
+HENV_VERSION="0.5.0"
 HENV_SCRIPT_URL="https://raw.githubusercontent.com/matplo/henv/main/henv"
 HENV_DEFAULT_DIR="$HOME/.henvs"
 
@@ -45,6 +45,91 @@ _maybe_fix_cppyy() {
         return 0
     fi
     return 1
+}
+
+# ─── Name registry ────────────────────────────────────────────────────────────
+# Tracks name -> path for every env henv knows about, global or local, so a
+# name can be resolved from anywhere (not just $HOME/.henvs/NAME). Backed by
+# a flat JSON file, read/written via small python3 snippets (same style as
+# _system_has_cppyy / _list_json elsewhere in this script).
+#
+# Concurrency: plain read-modify-write with no locking. Fine for a personal/
+# lab CLI used by one person at a time; two henv invocations racing to
+# register different names at the same instant could clobber each other's
+# write. Not addressed here.
+
+_registry_file() {
+    echo "$HENV_DEFAULT_DIR/registry.json"
+}
+
+_registry_get() {
+    # Prints the registered path for NAME and returns 0, or prints nothing
+    # and returns 1 if NAME isn't registered (or the registry doesn't exist).
+    local name="$1" reg
+    reg=$(_registry_file)
+    [ -f "$reg" ] || return 1
+    REGISTRY_FILE="$reg" REGISTRY_NAME="$name" python3 -c "
+import json, os, sys
+reg = os.environ['REGISTRY_FILE']
+name = os.environ['REGISTRY_NAME']
+try:
+    d = json.load(open(reg))
+except (OSError, ValueError):
+    sys.exit(1)
+path = d.get(name, {}).get('path', '')
+if not path:
+    sys.exit(1)
+print(path)
+"
+}
+
+_registry_set() {
+    local name="$1" path="$2" reg
+    reg=$(_registry_file)
+    mkdir -p "$HENV_DEFAULT_DIR"
+    REGISTRY_FILE="$reg" REGISTRY_NAME="$name" REGISTRY_PATH="$path" python3 -c "
+import json, os
+reg = os.environ['REGISTRY_FILE']
+try:
+    d = json.load(open(reg))
+except (OSError, ValueError):
+    d = {}
+d[os.environ['REGISTRY_NAME']] = {'path': os.environ['REGISTRY_PATH']}
+json.dump(d, open(reg, 'w'), indent=2)
+"
+}
+
+_registry_remove() {
+    local name="$1" reg
+    reg=$(_registry_file)
+    [ -f "$reg" ] || return 0
+    REGISTRY_FILE="$reg" REGISTRY_NAME="$name" python3 -c "
+import json, os
+reg = os.environ['REGISTRY_FILE']
+try:
+    d = json.load(open(reg))
+except (OSError, ValueError):
+    d = {}
+d.pop(os.environ['REGISTRY_NAME'], None)
+json.dump(d, open(reg, 'w'), indent=2)
+"
+}
+
+_registry_all() {
+    # Prints "name<TAB>path", one per line, for every registered env.
+    local reg
+    reg=$(_registry_file)
+    [ -f "$reg" ] || return 0
+    REGISTRY_FILE="$reg" python3 -c "
+import json, os
+reg = os.environ['REGISTRY_FILE']
+try:
+    d = json.load(open(reg))
+except (OSError, ValueError):
+    d = {}
+for name, entry in d.items():
+    print(name + '\t' + entry.get('path', ''))
+"
 }
 
 _read_toml_key() {
@@ -92,13 +177,15 @@ detect_tool() {
 
 resolve_env_path() {
     if [ -n "$HENV_NAME" ]; then
-        [ -z "$HENV_LOCATION" ] || die "--name and a location argument are mutually exclusive"
         case "$HENV_NAME" in
             */*|.|..) die "Invalid --name: '$HENV_NAME' (must be a plain name, no '/' or '..')" ;;
         esac
-        HENV_PATH="$HENV_DEFAULT_DIR/$HENV_NAME"
-        HENV_LABEL="$HENV_NAME"
-    elif [ -n "$HENV_LOCATION" ]; then
+    fi
+
+    if [ -n "$HENV_LOCATION" ]; then
+        # --name combined with a location is allowed: it creates/uses the env
+        # at that exact path, registered under the given name instead of the
+        # path's derived (basename) name.
         local base
         if [ "$HENV_LOCATION" = "." ]; then
             base="$PWD"
@@ -109,14 +196,41 @@ resolve_env_path() {
         fi
         base=$(cd "$base" 2>/dev/null && pwd) || die "Directory not found: $HENV_LOCATION"
         HENV_PATH="$base/.venv"
-        HENV_LABEL="$(basename "$base")"
+        HENV_LABEL="${HENV_NAME:-$(basename "$base")}"
+    elif [ -n "$HENV_NAME" ]; then
+        # No location given: look the name up in the registry first, so a
+        # previously-registered local env can be found from anywhere. Falls
+        # back to the legacy $HOME/.henvs/NAME path for a name never seen
+        # before (brand-new global env).
+        local registered
+        registered=$(_registry_get "$HENV_NAME") || true
+        HENV_PATH="${registered:-$HENV_DEFAULT_DIR/$HENV_NAME}"
+        HENV_LABEL="$HENV_NAME"
     else
         HENV_PATH="$HENV_DEFAULT_DIR/default"
         HENV_LABEL="default"
     fi
 
+    # Reconcile against the registry. An explicit --name is always
+    # authoritative and re-points the registry entry; a name derived from a
+    # location (or the bare "default") refuses to silently collide with an
+    # existing, differently-pathed registration — the caller has to pass
+    # --name to pick a distinct name instead.
+    local existing
+    existing=$(_registry_get "$HENV_LABEL") || true
+    if [ -n "$existing" ] && [ "$existing" != "$HENV_PATH" ]; then
+        if [ -n "$HENV_NAME" ]; then
+            info "Re-pointing name '$HENV_LABEL': $existing -> $HENV_PATH"
+        else
+            die "Name '$HENV_LABEL' is already registered to $existing — pass --name to use a distinct name for this env"
+        fi
+    fi
+
     if env_exists; then
         HENV_IS_NEW=false
+        # Self-heal / confirm the mapping now that the path is known to be
+        # real — also backfills envs created before the registry existed.
+        [ "$existing" = "$HENV_PATH" ] || _registry_set "$HENV_LABEL" "$HENV_PATH"
     else
         HENV_IS_NEW=true
     fi
@@ -162,6 +276,7 @@ create_env() {
     esac
     bootstrap_pip
     [ "$HENV_NO_HEPYY" = true ] || install_hepyy
+    _registry_set "$HENV_LABEL" "$HENV_PATH"
 }
 
 bootstrap_pip() {
@@ -381,46 +496,63 @@ cmd_install() {
     esac
 }
 
-cmd_list() {
-    [ "$HENV_JSON" = true ] && { _list_json; return; }
-    if [ ! -d "$HENV_DEFAULT_DIR" ]; then
-        info "No envs found ($HENV_DEFAULT_DIR does not exist)"
-        return
+_env_rows() {
+    # Prints "name<TAB>path<TAB>py_ver<TAB>complete" for every known env: every
+    # registry entry, plus any dir directly under $HENV_DEFAULT_DIR not
+    # already covered (back-compat for envs created before the registry
+    # existed, or ones nobody's activated since).
+    local seen=" " reg
+    reg=$(_registry_all)
+    if [ -n "$reg" ]; then
+        local name path
+        while IFS=$'\t' read -r name path; do
+            [ -n "$name" ] || continue
+            seen="$seen$name "
+            if [ -f "$path/bin/activate" ]; then
+                printf '%s\t%s\t%s\t%s\n' "$name" "$path" "$("$path/bin/python" --version 2>&1)" true
+            else
+                printf '%s\t%s\t%s\t%s\n' "$name" "$path" "" false
+            fi
+        done <<< "$reg"
     fi
-    info "Envs under $HENV_DEFAULT_DIR:"
-    local found=false
-    for dir in "$HENV_DEFAULT_DIR"/*/; do
-        [ -d "$dir" ] || continue
-        found=true
-        local name
-        name=$(basename "$dir")
-        if [ -f "$dir/bin/activate" ]; then
-            local py_ver
-            py_ver=$("$dir/bin/python" --version 2>&1)
-            printf "  %-24s  %s\n" "$name" "$py_ver"
-        else
-            printf "  %-24s  (incomplete)\n" "$name"
-        fi
-    done
-    [ "$found" = true ] || info "  (none)"
-}
-
-_list_json() {
-    local dir name py_ver complete
-    {
+    if [ -d "$HENV_DEFAULT_DIR" ]; then
+        local dir name path
         for dir in "$HENV_DEFAULT_DIR"/*/; do
             [ -d "$dir" ] || continue
             name=$(basename "$dir")
+            case "$seen" in *" $name "*) continue ;; esac
+            path="${dir%/}"
             if [ -f "$dir/bin/activate" ]; then
-                py_ver=$("$dir/bin/python" --version 2>&1)
-                complete=true
+                printf '%s\t%s\t%s\t%s\n' "$name" "$path" "$("$dir/bin/python" --version 2>&1)" true
             else
-                py_ver=""
-                complete=false
+                printf '%s\t%s\t%s\t%s\n' "$name" "$path" "" false
             fi
-            printf '%s\t%s\t%s\t%s\n' "$name" "$dir" "$py_ver" "$complete"
         done
-    } | python3 -c '
+    fi
+}
+
+cmd_list() {
+    [ "$HENV_JSON" = true ] && { _list_json; return; }
+    local rows
+    rows=$(_env_rows)
+    if [ -z "$rows" ]; then
+        info "No envs found"
+        return
+    fi
+    info "Envs:"
+    local name path py_ver complete
+    while IFS=$'\t' read -r name path py_ver complete; do
+        [ -n "$name" ] || continue
+        if [ "$complete" = true ]; then
+            printf "  %-24s  %-12s  %s\n" "$name" "$py_ver" "$path"
+        else
+            printf "  %-24s  %-12s  %s\n" "$name" "(incomplete)" "$path"
+        fi
+    done <<< "$rows"
+}
+
+_list_json() {
+    _env_rows | python3 -c '
 import json, sys
 envs = []
 for line in sys.stdin:
@@ -428,7 +560,7 @@ for line in sys.stdin:
     if not line:
         continue
     name, path, py_ver, complete = line.split("\t")
-    envs.append({"name": name, "path": path.rstrip("/"), "python": py_ver, "complete": complete == "true"})
+    envs.append({"name": name, "path": path, "python": py_ver, "complete": complete == "true"})
 print(json.dumps(envs, indent=2))
 '
 }
@@ -469,6 +601,40 @@ cmd_fix_cppyy() {
     fi
 }
 
+cmd_mv() {
+    # Not a byte-for-byte move: a plain 'mv' would leave stale absolute paths
+    # baked into bin/activate* and every installed script's shebang (and
+    # potentially RPATHs inside compiled cppyy libraries). Instead this
+    # recreates the env fresh at the new path — cppyy/hepyy come back the
+    # same way they would on any new env — then removes the old one and
+    # re-points the registry. Packages installed beyond cppyy/hepyy are NOT
+    # carried over; reinstall them after.
+    resolve_env_path
+    [ -f "$HENV_PATH/bin/activate" ] || die "Env not found: $HENV_PATH"
+
+    local old_path="$HENV_PATH"
+    local new_path="$HENV_MV_TARGET"
+    case "$new_path" in
+        /*) : ;;
+        *)  new_path="$PWD/$new_path" ;;
+    esac
+    mkdir -p "$(dirname "$new_path")" || die "Cannot create parent of $new_path"
+    new_path="$(cd "$(dirname "$new_path")" && pwd)/$(basename "$new_path")"
+
+    [ "$new_path" != "$old_path" ] || die "--mv target is the same as the current path"
+    if [ -e "$new_path" ]; then
+        [ "$HENV_YES" = true ] || die "$new_path already exists — pass --yes to overwrite it"
+        rm -rf "$new_path"
+    fi
+
+    warn "Recreating (not copying) '$HENV_LABEL' at the new path — packages beyond cppyy/hepyy are not preserved"
+    HENV_PATH="$new_path"
+    create_env
+
+    rm -rf "$old_path"
+    info "Moved '$HENV_LABEL': $old_path -> $new_path"
+}
+
 cmd_delete() {
     resolve_env_path
     [ -d "$HENV_PATH" ] || die "Env not found: $HENV_PATH"
@@ -483,6 +649,9 @@ cmd_delete() {
     case "$answer" in
         y|Y|yes|YES)
             rm -rf "$HENV_PATH"
+            local existing
+            existing=$(_registry_get "$HENV_LABEL") || true
+            [ "$existing" != "$HENV_PATH" ] || _registry_remove "$HENV_LABEL"
             info "Deleted $HENV_PATH" ;;
         *)
             info "Aborted" ;;
@@ -503,18 +672,20 @@ LOCATION:
   rel/path         local env:  $PWD/rel/path/.venv
 
 OPTIONS:
-  --name NAME      named global env: $HOME/.henvs/NAME
+  --name NAME / -n NAME      named env: registered NAME, or $HOME/.henvs/NAME if new
   --global         explicit global default (same as no LOCATION)
   --python PATH    explicit Python interpreter
   --run CMD ... / -x CMD ...   run CMD inside env, no interactive subshell
   --update         self-update henv from GitHub
   --install        install henv to ~/.local/bin (for piped curl usage)
   --print-activate emit 'source ...' lines for eval
-  --list           list envs under $HOME/.henvs/
+  --list           list all known envs (registry + $HOME/.henvs/)
   --list --json    list envs as a JSON array (name, path, python, complete)
-  --delete         delete the resolved env
+  --delete         delete the resolved env (and its registry entry)
   --info           print diagnostics for the resolved env (path, python, size, heyy)
   --recreate       delete and rebuild the resolved env before activating/running
+  --mv NEWPATH     recreate the resolved env at NEWPATH and update the registry
+                   (fresh env, not a byte-for-byte move — see MOVING AN ENV below)
   --packages-dir PATH        set HEPYY_PACKAGES_DIR (user-writable package store)
   --system-packages-dir PATH set HEPYY_SYSTEM_PACKAGES_DIR (read-only shared base)
   --fix-cppyy                remove the venv's binary cppyy wheel if a system
@@ -532,6 +703,26 @@ default, since henv is predominantly used with hepyy — pass --no-hepyy / --nh
 for a bare venv with neither. Whenever heyy ends up present in the venv
 (installed by henv or by hand), henv wires up its completion/modulefiles
 automatically.
+
+NAME REGISTRY:
+  Every env — global (--name) or local (henv . / henv path) — is recorded in
+  $HOME/.henvs/registry.json under a name: the one --name gives explicitly,
+  or (for a location) the directory's basename, or "default" when neither is
+  given. Once registered, --name resolves that env from anywhere:
+    cd ~/proj/backend && henv .        # registers 'backend' -> ~/proj/backend/.venv
+    cd / && henv --name backend --info # finds it from any directory
+  A name derived from a location that collides with a different, already-
+  registered path is refused (pass --name explicitly to disambiguate); an
+  explicit --name always wins and re-points the registry if needed.
+
+MOVING AN ENV:
+  henv --name backend --mv /new/path/backend-env
+  This does not copy files — venvs bake absolute paths into bin/activate*
+  and every installed script's shebang, so a plain 'mv' would break them
+  (cppyy can also embed absolute RPATHs). --mv instead deletes the old env
+  and recreates a fresh one at the new path (cppyy/hepyy reinstalled the
+  same as any new env), then updates the registry. Packages installed
+  beyond cppyy/hepyy are NOT preserved — reinstall them after.
 
 PACKAGE SHARING (HPC / shared filesystems):
   henv --system-packages-dir /shared/hep/packages .
@@ -553,6 +744,7 @@ EXAMPLES:
   henv                            # global default env (installs cppyy + hepyy)
   henv .                          # local .venv in current directory
   henv --name hep2026             # named global env
+  henv -n hep2026                 # -n is a short alias for --name
   henv . --run python script.py   # run without subshell
   henv --name bare --no-hepyy     # plain venv, no cppyy/hepyy
 
@@ -580,6 +772,7 @@ HENV_YES=false
 HENV_SUBCOMMAND="activate"
 HENV_RUN_ARGS=()
 HENV_INSTALL_PREFIX=""
+HENV_MV_TARGET=""
 HENV_PACKAGES_DIR="${HEPYY_PACKAGES_DIR:-}"
 HENV_SYSTEM_PACKAGES_DIR="${HEPYY_SYSTEM_PACKAGES_DIR:-}"
 HENV_RECREATE=false
@@ -590,7 +783,7 @@ HENV_NO_HEPYY=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --name)
+        --name|-n)
             [ -n "${2:-}" ] || die "--name requires a value"
             HENV_NAME="$2"; shift 2 ;;
         --name=*)
@@ -623,6 +816,9 @@ while [ $# -gt 0 ]; do
             HENV_SUBCOMMAND="info"; shift ;;
         --fix-cppyy)
             HENV_SUBCOMMAND="fix_cppyy"; shift ;;
+        --mv)
+            [ -n "${2:-}" ] || die "--mv requires a target path"
+            HENV_SUBCOMMAND="mv"; HENV_MV_TARGET="$2"; shift 2 ;;
         --recreate)
             HENV_RECREATE=true; shift ;;
         --quiet|-q)
@@ -671,6 +867,7 @@ case "$HENV_SUBCOMMAND" in
     delete)         cmd_delete ;;
     info)           cmd_info ;;
     fix_cppyy)      cmd_fix_cppyy ;;
+    mv)             cmd_mv ;;
     help)           cmd_help ;;
     version)        echo "henv $HENV_VERSION" ;;
     *)              die "Unknown subcommand: $HENV_SUBCOMMAND" ;;
