@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # henv — HEP virtual environment manager
 # https://github.com/matplo/henv
-HENV_VERSION="0.5.1"
+HENV_VERSION="0.5.2"
 HENV_SCRIPT_URL="https://raw.githubusercontent.com/matplo/henv/main/henv"
 HENV_DEFAULT_DIR="$HOME/.henvs"
 
@@ -327,9 +327,21 @@ install_hepyy() {
     if [ -x "$heyy" ]; then
         info "Running heyy init..."
         "$heyy" init || warn "heyy init failed (non-fatal)"
+        print_heyy_completion_tip
     else
         warn "heyy not found after install — skipping heyy init"
     fi
+}
+
+print_heyy_completion_tip() {
+    [ "$HENV_QUIET" = true ] && return 0
+    echo "[henv] For heyy tab completion in your normal shell (outside henv), add:"
+    echo "  Bash — add to ~/.bashrc:"
+    echo "    eval \"\$(heyy completion)\""
+    echo "  Zsh — add to ~/.zshrc:"
+    echo "    eval \"\$(heyy completion)\""
+    echo "  Fish — add to ~/.config/fish/config.fish:"
+    echo "    heyy completion --shell fish | source"
 }
 
 # ─── Activation ───────────────────────────────────────────────────────────────
@@ -705,7 +717,9 @@ New envs get cppyy and hepyy (https://pypi.org/project/hepyy/) installed by
 default, since henv is predominantly used with hepyy — pass --no-hepyy / --nh
 for a bare venv with neither. Whenever heyy ends up present in the venv
 (installed by henv or by hand), henv wires up its completion/modulefiles
-automatically.
+automatically inside the henv subshell/--run. Right after heyy is installed,
+henv also prints the one-liner to add heyy's own completion to your normal
+shell rc (outside henv) — see SHELL INTEGRATION below.
 
 NAME REGISTRY:
   Every env — global (--name) or local (henv . / henv path) — is recorded in
@@ -763,6 +777,10 @@ INSTALL (one-liner):
 
 SHELL INTEGRATION (add to ~/.bashrc):
   hactivate() { eval "$(henv --print-activate "$@")"; }
+
+  # heyy tab completion in your normal shell (printed after heyy installs):
+  #   Bash (~/.bashrc) / Zsh (~/.zshrc):  eval "$(heyy completion)"
+  #   Fish (~/.config/fish/config.fish):  heyy completion --shell fish | source
 EOF
 }
 

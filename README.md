@@ -180,6 +180,25 @@ wires it up automatically — every time you enter the subshell or use `--run`:
 Additionally in the interactive subshell:
 - Tab completion for `heyy` / `hepyy` / `her` is enabled
 
+### Completion in your normal shell
+
+The subshell/`--run` completion above only exists inside `henv`. Right after
+`heyy` gets installed into a new env, `henv` also prints the one-liner to
+enable `heyy` completion in your regular shell — so it works even outside
+`henv`, as long as `heyy` is on `PATH` (e.g. once you've activated a venv
+some other way):
+
+```bash
+# Bash — add to ~/.bashrc:
+eval "$(heyy completion)"
+
+# Zsh — add to ~/.zshrc:
+eval "$(heyy completion)"
+
+# Fish — add to ~/.config/fish/config.fish:
+heyy completion --shell fish | source
+```
+
 ---
 
 ## Running commands
