@@ -70,6 +70,8 @@ If the env already exists it is activated immediately — no reinstall, no promp
 --delete                     delete the resolved env
 --info                       print diagnostics for the resolved env
 --recreate                   delete and rebuild the resolved env before activating/running
+--fix-cppyy                  remove the venv's binary cppyy wheel if a system build is found
+--no-cppyy                   force --fix-cppyy's removal even without a detected system cppyy
 --yes / -y                   non-interactive; auto-answer yes to all prompts
 --quiet / -q                 suppress [henv] info banners (warnings/errors still shown)
 --version                    print version
@@ -287,6 +289,23 @@ eval "$(henv --system-packages-dir /shared/hep/packages --print-activate .)"
 
 See [WORKFLOW-EXAMPLE.md](https://github.com/matplo/hepyy/blob/main/WORKFLOW-EXAMPLE.md)
 in the hepyy repository for full step-by-step examples.
+
+### Fixing a broken binary cppyy wheel
+
+On some platforms, the binary `cppyy` wheel pip pulls in (as a dependency of
+`hepyy`) doesn't work, while a shared build registered under
+`--system-packages-dir` does. `--fix-cppyy` removes the venv-local wheel so
+`heyy`'s loader falls back to the shared build instead:
+
+```bash
+henv --name old-env --system-packages-dir /shared/hep/packages --fix-cppyy
+```
+
+It only acts when a `cppyy` entry is found in the system dir's
+`registry.json` — pass `--no-cppyy` alongside it to force the removal
+regardless. This is unrelated to `heyy`'s own `fix-cppyy` command, which
+repairs broken library paths in an already-installed cppyy rather than
+swap it out for a different build.
 
 ---
 

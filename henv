@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # henv — HEP virtual environment manager
 # https://github.com/matplo/henv
-HENV_VERSION="0.3.0"
+HENV_VERSION="0.3.1"
 HENV_SCRIPT_URL="https://raw.githubusercontent.com/matplo/henv/main/henv"
 HENV_DEFAULT_DIR="$HOME/.henvs"
 
@@ -11,6 +11,22 @@ die()  { echo "[henv] ERROR: $*" >&2; exit 1; }
 info() { [ "$HENV_QUIET" = true ] || echo "[henv] $*"; }
 warn() { echo "[henv] WARNING: $*" >&2; }
 command_exists() { command -v "$1" >/dev/null 2>&1; }
+
+_system_has_cppyy() {
+    # Returns true only when HENV_SYSTEM_PACKAGES_DIR is set AND its registry.json
+    # contains a cppyy entry built with --target (i.e. a cppyy/ package dir exists
+    # directly in the registered prefix).
+    [ -n "$HENV_SYSTEM_PACKAGES_DIR" ] || return 1
+    local reg="$HENV_SYSTEM_PACKAGES_DIR/registry.json"
+    grep -q '"cppyy"' "$reg" 2>/dev/null || return 1
+    local prefix
+    prefix=$(python3 -c "
+import json
+d=json.load(open('$reg'))
+print(d.get('packages',{}).get('cppyy',{}).get('prefix',''))
+" 2>/dev/null)
+    [ -n "$prefix" ] && [ -d "$prefix/cppyy" ]
+}
 
 _read_toml_key() {
     # Extract a simple string value from a TOML file: key = "value" or key = 'value'
@@ -383,6 +399,31 @@ cmd_info() {
     fi
 }
 
+cmd_fix_cppyy() {
+    # Not the same problem as heyy's own 'fix-cppyy' (which repairs broken
+    # library paths in an already-installed cppyy). This instead removes the
+    # binary cppyy wheel pip pulled into the venv when a system/HPC-shared
+    # build already exists — the wheel doesn't work on every platform and
+    # just shadows the working one heyy's loader would otherwise find via
+    # HENV_SYSTEM_PACKAGES_DIR.
+    resolve_env_path
+    [ -f "$HENV_PATH/bin/activate" ] || die "Env not found: $HENV_PATH"
+
+    if [ "$HENV_NO_CPPYY" = true ] || _system_has_cppyy; then
+        if [ "$HENV_NO_CPPYY" = true ]; then
+            info "Removing binary cppyy wheel (--no-cppyy)"
+        else
+            info "Removing binary cppyy wheel (system cppyy found in $HENV_SYSTEM_PACKAGES_DIR)"
+        fi
+        "$HENV_PATH/bin/pip" uninstall -y \
+            cppyy cppyy-backend cppyy-cling CPyCppyy 2>/dev/null || true
+        info "Done — cppyy will now resolve from the system build via heyy's loader."
+    else
+        info "No system cppyy detected under HENV_SYSTEM_PACKAGES_DIR (${HENV_SYSTEM_PACKAGES_DIR:-unset}) — nothing to fix."
+        info "Pass --no-cppyy to force removal of the venv's binary cppyy wheel anyway."
+    fi
+}
+
 cmd_delete() {
     resolve_env_path
     [ -d "$HENV_PATH" ] || die "Env not found: $HENV_PATH"
@@ -431,6 +472,10 @@ OPTIONS:
   --recreate       delete and rebuild the resolved env before activating/running
   --packages-dir PATH        set HEPYY_PACKAGES_DIR (user-writable package store)
   --system-packages-dir PATH set HEPYY_SYSTEM_PACKAGES_DIR (read-only shared base)
+  --fix-cppyy                remove the venv's binary cppyy wheel if a system
+                              build is found under --system-packages-dir
+  --no-cppyy                 force --fix-cppyy's removal even without a detected
+                              system cppyy
   --yes / -y                 non-interactive; auto-answer yes to prompts
   --quiet / -q               suppress [henv] info banners (warnings/errors still shown)
   --version                  print version string
@@ -449,6 +494,12 @@ PACKAGE SHARING (HPC / shared filesystems):
   # Or configure in .hepyy.toml (auto-detected by henv):
   #   packages_dir = "~/.hepyy_packages"
   #   system_packages_dir = "/shared/hep/packages"
+
+  # If 'pip install cppyy' (pulled in by hepyy) doesn't work on this platform
+  # and a system build is already shared, drop the venv's copy in favor of it:
+  henv --name old-env --system-packages-dir /shared/hep/packages --fix-cppyy
+  # (--fix-cppyy is unrelated to heyy's own 'fix-cppyy', which repairs broken
+  # library paths in an already-installed cppyy rather than swap it out)
 
 EXAMPLES:
   henv                            # global default env
@@ -485,6 +536,7 @@ HENV_SYSTEM_PACKAGES_DIR="${HEPYY_SYSTEM_PACKAGES_DIR:-}"
 HENV_RECREATE=false
 HENV_QUIET=false
 HENV_JSON=false
+HENV_NO_CPPYY=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -519,12 +571,16 @@ while [ $# -gt 0 ]; do
             HENV_SUBCOMMAND="delete"; shift ;;
         --info)
             HENV_SUBCOMMAND="info"; shift ;;
+        --fix-cppyy)
+            HENV_SUBCOMMAND="fix_cppyy"; shift ;;
         --recreate)
             HENV_RECREATE=true; shift ;;
         --quiet|-q)
             HENV_QUIET=true; shift ;;
         --json)
             HENV_JSON=true; shift ;;
+        --no-cppyy)
+            HENV_NO_CPPYY=true; shift ;;
         --packages-dir)
             [ -n "${2:-}" ] || die "--packages-dir requires a value"
             HENV_PACKAGES_DIR="$2"; shift 2 ;;
@@ -562,6 +618,7 @@ case "$HENV_SUBCOMMAND" in
     list)           cmd_list ;;
     delete)         cmd_delete ;;
     info)           cmd_info ;;
+    fix_cppyy)      cmd_fix_cppyy ;;
     help)           cmd_help ;;
     version)        echo "henv $HENV_VERSION" ;;
     *)              die "Unknown subcommand: $HENV_SUBCOMMAND" ;;

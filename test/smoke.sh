@@ -89,6 +89,11 @@ assert_contains "--list --json shows the env" '"citest"' \
 assert_contains "--info reports the env" "name    : citest" \
     bash "$HENV" --name citest --info
 
+assert_contains "--fix-cppyy no-ops without a detected system cppyy" "nothing to fix" \
+    bash "$HENV" --name citest --fix-cppyy
+assert_contains "--fix-cppyy --no-cppyy forces removal" "Removing binary cppyy wheel" \
+    bash "$HENV" --name citest --fix-cppyy --no-cppyy
+
 # --quiet suppresses [henv] info banners
 out="$(bash "$HENV" --name citest -q --run true 2>&1)"
 if [ -z "$out" ]; then
