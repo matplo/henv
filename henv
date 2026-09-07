@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # henv — HEP virtual environment manager
 # https://github.com/matplo/henv
-HENV_VERSION="0.3.1"
+HENV_VERSION="0.4.0"
 HENV_SCRIPT_URL="https://raw.githubusercontent.com/matplo/henv/main/henv"
 HENV_DEFAULT_DIR="$HOME/.henvs"
 
@@ -26,6 +26,25 @@ d=json.load(open('$reg'))
 print(d.get('packages',{}).get('cppyy',{}).get('prefix',''))
 " 2>/dev/null)
     [ -n "$prefix" ] && [ -d "$prefix/cppyy" ]
+}
+
+_maybe_fix_cppyy() {
+    # Removes the venv's binary cppyy wheel when --no-cppyy is set explicitly,
+    # or when a system-provided cppyy is auto-detected (_system_has_cppyy).
+    # Returns 1 (does nothing) when neither applies. Shared by install_hepyy
+    # (run right after installing cppyy/hepyy into a new env) and the
+    # standalone --fix-cppyy command (run against any existing env).
+    if [ "$HENV_NO_CPPYY" = true ] || _system_has_cppyy; then
+        if [ "$HENV_NO_CPPYY" = true ]; then
+            info "Removing binary cppyy wheel (--no-cppyy)"
+        else
+            info "Removing binary cppyy wheel (system cppyy found in $HENV_SYSTEM_PACKAGES_DIR)"
+        fi
+        "$HENV_PATH/bin/pip" uninstall -y \
+            cppyy cppyy-backend cppyy-cling CPyCppyy 2>/dev/null || true
+        return 0
+    fi
+    return 1
 }
 
 _read_toml_key() {
@@ -142,6 +161,7 @@ create_env() {
             "$HENV_PYTHON" -m venv "$HENV_PATH" || die "python -m venv failed" ;;
     esac
     bootstrap_pip
+    [ "$HENV_NO_HEPYY" = true ] || install_hepyy
 }
 
 bootstrap_pip() {
@@ -162,6 +182,36 @@ bootstrap_pip() {
     info "Upgrading pip, setuptools, and wheel..."
     "$py" -m pip install --upgrade pip setuptools wheel --quiet \
         || warn "pip upgrade failed (non-fatal)"
+}
+
+_venv_pip_install() {
+    if [ "$HENV_TOOL" = "uv" ]; then
+        uv pip install --python "$HENV_PATH" "$@"
+    else
+        "$HENV_PATH/bin/pip" install "$@"
+    fi
+}
+
+install_hepyy() {
+    # henv is predominantly used with hepyy, so both cppyy and hepyy are
+    # installed by default on env creation. Skip with --no-hepyy / --nh.
+    info "Installing cppyy..."
+    _venv_pip_install cppyy || warn "cppyy install failed (non-fatal)"
+
+    info "Installing hepyy..."
+    _venv_pip_install hepyy || warn "hepyy install failed (non-fatal)"
+
+    # Swap the binary cppyy wheel for a system build when one is registered
+    # under --system-packages-dir (or --no-cppyy forces it regardless).
+    _maybe_fix_cppyy || true
+
+    local heyy="$HENV_PATH/bin/heyy"
+    if [ -x "$heyy" ]; then
+        info "Running heyy init..."
+        "$heyy" init || warn "heyy init failed (non-fatal)"
+    else
+        warn "heyy not found after install — skipping heyy init"
+    fi
 }
 
 # ─── Activation ───────────────────────────────────────────────────────────────
@@ -405,18 +455,13 @@ cmd_fix_cppyy() {
     # binary cppyy wheel pip pulled into the venv when a system/HPC-shared
     # build already exists — the wheel doesn't work on every platform and
     # just shadows the working one heyy's loader would otherwise find via
-    # HENV_SYSTEM_PACKAGES_DIR.
+    # HENV_SYSTEM_PACKAGES_DIR. install_hepyy already runs this once at env
+    # creation; this is for re-running it later (e.g. --system-packages-dir
+    # was only set/registered after the env already existed).
     resolve_env_path
     [ -f "$HENV_PATH/bin/activate" ] || die "Env not found: $HENV_PATH"
 
-    if [ "$HENV_NO_CPPYY" = true ] || _system_has_cppyy; then
-        if [ "$HENV_NO_CPPYY" = true ]; then
-            info "Removing binary cppyy wheel (--no-cppyy)"
-        else
-            info "Removing binary cppyy wheel (system cppyy found in $HENV_SYSTEM_PACKAGES_DIR)"
-        fi
-        "$HENV_PATH/bin/pip" uninstall -y \
-            cppyy cppyy-backend cppyy-cling CPyCppyy 2>/dev/null || true
+    if _maybe_fix_cppyy; then
         info "Done — cppyy will now resolve from the system build via heyy's loader."
     else
         info "No system cppyy detected under HENV_SYSTEM_PACKAGES_DIR (${HENV_SYSTEM_PACKAGES_DIR:-unset}) — nothing to fix."
@@ -476,14 +521,17 @@ OPTIONS:
                               build is found under --system-packages-dir
   --no-cppyy                 force --fix-cppyy's removal even without a detected
                               system cppyy
+  --no-hepyy / --nh          skip installing cppyy + hepyy on env creation
   --yes / -y                 non-interactive; auto-answer yes to prompts
   --quiet / -q               suppress [henv] info banners (warnings/errors still shown)
   --version                  print version string
   -h / --help                this help
 
-heyy (https://pypi.org/project/hepyy/) is not installed by henv — it's a plain
-'pip install hepyy' inside the activated env if you want it. henv will wire up
-its completion/modulefiles automatically whenever it's present in the venv.
+New envs get cppyy and hepyy (https://pypi.org/project/hepyy/) installed by
+default, since henv is predominantly used with hepyy — pass --no-hepyy / --nh
+for a bare venv with neither. Whenever heyy ends up present in the venv
+(installed by henv or by hand), henv wires up its completion/modulefiles
+automatically.
 
 PACKAGE SHARING (HPC / shared filesystems):
   henv --system-packages-dir /shared/hep/packages .
@@ -502,10 +550,11 @@ PACKAGE SHARING (HPC / shared filesystems):
   # library paths in an already-installed cppyy rather than swap it out)
 
 EXAMPLES:
-  henv                            # global default env
+  henv                            # global default env (installs cppyy + hepyy)
   henv .                          # local .venv in current directory
   henv --name hep2026             # named global env
   henv . --run python script.py   # run without subshell
+  henv --name bare --no-hepyy     # plain venv, no cppyy/hepyy
 
   # Activate in current shell (no subshell):
   eval "$(henv --print-activate .)"
@@ -537,6 +586,7 @@ HENV_RECREATE=false
 HENV_QUIET=false
 HENV_JSON=false
 HENV_NO_CPPYY=false
+HENV_NO_HEPYY=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -581,6 +631,8 @@ while [ $# -gt 0 ]; do
             HENV_JSON=true; shift ;;
         --no-cppyy)
             HENV_NO_CPPYY=true; shift ;;
+        --no-hepyy|--nh)
+            HENV_NO_HEPYY=true; shift ;;
         --packages-dir)
             [ -n "${2:-}" ] || die "--packages-dir requires a value"
             HENV_PACKAGES_DIR="$2"; shift 2 ;;

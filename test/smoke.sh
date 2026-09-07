@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # smoke.sh — dependency-free functional smoke test for henv.
 #
-# Runs against a fake $HOME so it never touches the real ~/.henvs. henv no
-# longer installs anything beyond the venv itself, so this stays hermetic
-# (no network calls) without any extra flags.
+# Runs against a fake $HOME so it never touches the real ~/.henvs, and uses
+# --no-hepyy throughout so it stays fast/hermetic (no network calls) — henv
+# installs cppyy + hepyy by default otherwise.
 #
 # Usage: bash test/smoke.sh
 
@@ -66,12 +66,26 @@ assert_success  "--version exits 0"              bash "$HENV" --version
 assert_success  "--help exits 0"                 bash "$HENV" --help
 
 assert_contains "-x/--run print expected output" "hello" \
-    bash "$HENV" --name citest --run echo hello
+    bash "$HENV" --name citest --no-hepyy --run echo hello
 if [ -f "$HOME/.henvs/citest/bin/activate" ]; then
     ok "env created at expected path"
 else
     bad "env created at expected path"
 fi
+if [ ! -e "$HOME/.henvs/citest/bin/heyy" ]; then
+    ok "--no-hepyy skips installing cppyy/hepyy"
+else
+    bad "--no-hepyy skips installing cppyy/hepyy"
+fi
+
+assert_contains "--nh is a short alias for --no-hepyy" "hi" \
+    bash "$HENV" --name citest2 --nh --run echo hi
+if [ ! -e "$HOME/.henvs/citest2/bin/heyy" ]; then
+    ok "--nh skips installing cppyy/hepyy"
+else
+    bad "--nh skips installing cppyy/hepyy"
+fi
+bash "$HENV" --name citest2 --delete --yes >/dev/null 2>&1
 
 assert_contains "existing env activates + runs (--run)" "hello2" \
     bash "$HENV" --name citest --run echo hello2
@@ -79,7 +93,7 @@ assert_contains "existing env activates + runs (-x alias)" "hello3" \
     bash "$HENV" --name citest -x echo hello3
 
 assert_contains "--recreate rebuilds the env" "Recreating env" \
-    bash "$HENV" --name citest --recreate --run true
+    bash "$HENV" --name citest --recreate --no-hepyy --run true
 
 assert_contains "--list shows the env" "citest" \
     bash "$HENV" --list

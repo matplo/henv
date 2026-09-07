@@ -10,7 +10,7 @@ henv . --run python script.py   # run without interactive subshell
 ```
 
 Designed for the [hepyy](https://github.com/matplo/hepyy) workflow: spin up a
-venv, `pip install hepyy`, build HEP packages, analyse.
+venv (with `cppyy` + `hepyy` installed by default), build HEP packages, analyse.
 
 ---
 
@@ -72,6 +72,7 @@ If the env already exists it is activated immediately — no reinstall, no promp
 --recreate                   delete and rebuild the resolved env before activating/running
 --fix-cppyy                  remove the venv's binary cppyy wheel if a system build is found
 --no-cppyy                   force --fix-cppyy's removal even without a detected system cppyy
+--no-hepyy / --nh            skip installing cppyy + hepyy on env creation
 --yes / -y                   non-interactive; auto-answer yes to all prompts
 --quiet / -q                 suppress [henv] info banners (warnings/errors still shown)
 --version                    print version
@@ -86,10 +87,9 @@ If the env already exists it is activated immediately — no reinstall, no promp
 # Create a project-local env and drop into it
 cd ~/myanalysis
 henv .
-# → creates .venv, activates subshell
+# → creates .venv, installs cppyy + hepyy, activates subshell
 # → PS1 shows: (henv:myanalysis) ...
 
-pip install hepyy                     # one-time, inside the subshell
 heyy install fastjet hepmc3 pythia8
 python my_analysis.py
 exit                                   # back to parent shell
@@ -151,14 +151,19 @@ Override the interpreter with `--python /path/to/python3.11`.
 
 ## hepyy integration
 
-`henv` does **not** install [hepyy](https://pypi.org/project/hepyy/) itself — it's
-a plain `pip install hepyy` now that it's on PyPI, so there's no need for henv to
-prompt for it or manage a GitHub fallback:
+`henv` is predominantly used with [hepyy](https://pypi.org/project/hepyy/), so
+new envs get `cppyy` and `hepyy` installed by default (a plain `pip install`
+now that hepyy is on PyPI — no prompt, no GitHub fallback) and `heyy init`
+run automatically:
 
 ```bash
-henv .                 # activate the env
-pip install hepyy       # one-time
-heyy init
+henv .                 # creates the env with cppyy + hepyy already installed
+heyy install fastjet hepmc3 pythia8
+```
+
+Skip both with `--no-hepyy` (or `--nh`) for a bare venv:
+```bash
+henv . --no-hepyy
 ```
 
 Whenever `heyy` (or its aliases `hepyy` / `her`) is present in the venv, `henv`
@@ -292,20 +297,22 @@ in the hepyy repository for full step-by-step examples.
 
 ### Fixing a broken binary cppyy wheel
 
-On some platforms, the binary `cppyy` wheel pip pulls in (as a dependency of
-`hepyy`) doesn't work, while a shared build registered under
-`--system-packages-dir` does. `--fix-cppyy` removes the venv-local wheel so
-`heyy`'s loader falls back to the shared build instead:
+On some platforms, the binary `cppyy` wheel installed by default doesn't
+work, while a shared build registered under `--system-packages-dir` does.
+When `--system-packages-dir` is set on env creation, henv already checks for
+this and swaps the venv-local wheel out automatically. `--fix-cppyy` re-runs
+that same check against an existing env — e.g. when `--system-packages-dir`
+was only registered after the env was created:
 
 ```bash
 henv --name old-env --system-packages-dir /shared/hep/packages --fix-cppyy
 ```
 
 It only acts when a `cppyy` entry is found in the system dir's
-`registry.json` — pass `--no-cppyy` alongside it to force the removal
-regardless. This is unrelated to `heyy`'s own `fix-cppyy` command, which
-repairs broken library paths in an already-installed cppyy rather than
-swap it out for a different build.
+`registry.json` — pass `--no-cppyy` alongside it (at creation or with
+`--fix-cppyy`) to force the removal regardless. This is unrelated to
+`heyy`'s own `fix-cppyy` command, which repairs broken library paths in an
+already-installed cppyy rather than swap it out for a different build.
 
 ---
 
