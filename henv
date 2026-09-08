@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # henv — HEP virtual environment manager
 # https://github.com/matplo/henv
-HENV_VERSION="0.6.0"
+HENV_VERSION="0.6.1"
 HENV_SCRIPT_URL="https://raw.githubusercontent.com/matplo/henv/main/henv"
 HENV_DEFAULT_DIR="$HOME/.henvs"
 
@@ -81,12 +81,27 @@ _cling_extra_includes() {
 _maybe_export_cling_args() {
     # ${VAR+x} (not -n "$VAR"): only auto-detect when EXTRA_CLING_ARGS was
     # never set at all. An explicit `export EXTRA_CLING_ARGS=""` is a real,
-    # deliberate opt-out and is left untouched, same as any other value the
-    # user already set.
+    # deliberate opt-out (of this whole feature, CC/CXX included below) and
+    # is left untouched, same as any other value the user already set.
     [ -n "${EXTRA_CLING_ARGS+x}" ] && return 0
     local args
     args=$(_cling_extra_includes) || return 0
     export EXTRA_CLING_ARGS="$args"
+
+    # Also point CC/CXX (if unset) at the exact gcc/g++ used to compute the
+    # include list above. Some distros/HPC setups don't keep the generic
+    # `cc`/`c++` names in sync with `gcc`/`g++` (seen on Perlmutter: after
+    # `module load gcc-native/14`, `gcc`/`g++` report 14.3.0 but `c++` still
+    # resolves to SUSE's base 7.5.0) -- this keeps anything that respects
+    # CC/CXX pointed at the same compiler we already introspected, rather
+    # than a possibly older/mismatched one still sitting on PATH as `cc`/`c++`.
+    local cc cxx
+    if [ -z "${CC+x}" ] && cc=$(command -v gcc); then
+        export CC="$cc"
+    fi
+    if [ -z "${CXX+x}" ] && cxx=$(command -v g++); then
+        export CXX="$cxx"
+    fi
 }
 
 # ─── Name registry ────────────────────────────────────────────────────────────
@@ -398,9 +413,13 @@ launch_subshell() {
 
     # Computed here, at write time, in the parent process (same machine the
     # subshell will run on) -- see _cling_extra_includes for why.
-    local cling_args=""
+    local cling_args="" cling_cc="" cling_cxx=""
     if [ -x "$HENV_PATH/bin/heyy" ] && [ -z "${EXTRA_CLING_ARGS+x}" ]; then
         cling_args=$(_cling_extra_includes) || true
+        if [ -n "$cling_args" ]; then
+            [ -z "${CC+x}" ]  && cling_cc=$(command -v gcc 2>/dev/null)
+            [ -z "${CXX+x}" ] && cling_cxx=$(command -v g++ 2>/dev/null)
+        fi
     fi
 
     # First line of the init file cleans up the file itself
@@ -417,6 +436,8 @@ source "$HENV_PATH/bin/activate"
 ${HENV_PACKAGES_DIR:+export HEPYY_PACKAGES_DIR="$HENV_PACKAGES_DIR"}
 ${HENV_SYSTEM_PACKAGES_DIR:+export HEPYY_SYSTEM_PACKAGES_DIR="$HENV_SYSTEM_PACKAGES_DIR"}
 ${cling_args:+export EXTRA_CLING_ARGS="$cling_args"}
+${cling_cc:+export CC="$cling_cc"}
+${cling_cxx:+export CXX="$cling_cxx"}
 # Decorate prompt and export markers
 export HENV_ACTIVE="$HENV_LABEL"
 export HENV_PATH="$HENV_PATH"
@@ -462,9 +483,17 @@ cmd_print_activate() {
     [ -n "$HENV_PACKAGES_DIR" ]        && echo "export HEPYY_PACKAGES_DIR=\"$HENV_PACKAGES_DIR\""
     [ -n "$HENV_SYSTEM_PACKAGES_DIR" ] && echo "export HEPYY_SYSTEM_PACKAGES_DIR=\"$HENV_SYSTEM_PACKAGES_DIR\""
     if [ -x "$HENV_PATH/bin/heyy" ] && [ -z "${EXTRA_CLING_ARGS+x}" ]; then
-        local cling_args
+        local cling_args cling_cc cling_cxx
         cling_args=$(_cling_extra_includes) || true
-        [ -n "$cling_args" ] && echo "export EXTRA_CLING_ARGS=\"$cling_args\""
+        if [ -n "$cling_args" ]; then
+            echo "export EXTRA_CLING_ARGS=\"$cling_args\""
+            if [ -z "${CC+x}" ] && cling_cc=$(command -v gcc 2>/dev/null); then
+                echo "export CC=\"$cling_cc\""
+            fi
+            if [ -z "${CXX+x}" ] && cling_cxx=$(command -v g++ 2>/dev/null); then
+                echo "export CXX=\"$cling_cxx\""
+            fi
+        fi
     fi
     echo "export HENV_ACTIVE=\"$HENV_LABEL\""
     echo "export HENV_PATH=\"$HENV_PATH\""
@@ -496,9 +525,13 @@ cmd_run() {
     [ "${#HENV_RUN_ARGS[@]}" -gt 0 ] || die "--run requires a command"
     local tmpfile
     tmpfile=$(mktemp /tmp/henv_run.XXXXXX)
-    local cling_args=""
+    local cling_args="" cling_cc="" cling_cxx=""
     if [ -x "$HENV_PATH/bin/heyy" ] && [ -z "${EXTRA_CLING_ARGS+x}" ]; then
         cling_args=$(_cling_extra_includes) || true
+        if [ -n "$cling_args" ]; then
+            [ -z "${CC+x}" ]  && cling_cc=$(command -v gcc 2>/dev/null)
+            [ -z "${CXX+x}" ] && cling_cxx=$(command -v g++ 2>/dev/null)
+        fi
     fi
     cat > "$tmpfile" <<INITEOF
 rm -f "$tmpfile"
@@ -511,6 +544,8 @@ source "$HENV_PATH/bin/activate"
 ${HENV_PACKAGES_DIR:+export HEPYY_PACKAGES_DIR="$HENV_PACKAGES_DIR"}
 ${HENV_SYSTEM_PACKAGES_DIR:+export HEPYY_SYSTEM_PACKAGES_DIR="$HENV_SYSTEM_PACKAGES_DIR"}
 ${cling_args:+export EXTRA_CLING_ARGS="$cling_args"}
+${cling_cc:+export CC="$cling_cc"}
+${cling_cxx:+export CXX="$cling_cxx"}
 export HENV_ACTIVE="$HENV_LABEL"
 export HENV_PATH="$HENV_PATH"
 if [ -x "$HENV_PATH/bin/heyy" ]; then
@@ -785,12 +820,18 @@ automatically inside the henv subshell/--run. Right after heyy is installed,
 henv also prints the one-liner to add heyy's own completion to your normal
 shell rc (outside henv) — see SHELL INTEGRATION below.
 
-On Linux, whenever heyy is present, henv also auto-exports EXTRA_CLING_ARGS
-(computed fresh from this machine's own g++ every time — never hardcoded)
-to work around cppyy-cling's bundled Clang failing to recognize a GCC
-newer than it knows about (seen on Perlmutter with GCC 14: 'fatal error:
-filesystem file not found'). A value you already set — even an explicit
-empty `export EXTRA_CLING_ARGS=""` — is always left untouched.
+On Linux, whenever heyy is present, henv also auto-exports EXTRA_CLING_ARGS,
+and CC/CXX pointed at gcc/g++ specifically (computed fresh from this
+machine's own g++/gcc every time — never hardcoded), to work around
+cppyy-cling's bundled Clang failing to recognize a GCC newer than it knows
+about (seen on Perlmutter with GCC 14: 'fatal error: filesystem file not
+found'). CC/CXX matter separately because some setups don't keep the
+generic 'cc'/'c++' names in sync with 'gcc'/'g++' (also seen on Perlmutter:
+'c++' stayed pinned to SUSE's base GCC 7.5.0 even after loading a gcc-14
+module). All of this is computed once, at the moment you run henv — load
+whichever gcc module you want *before* running henv, not after. A value
+you already set for any of these three — even an explicit empty
+`export EXTRA_CLING_ARGS=""` — is always left untouched.
 
 NAME REGISTRY:
   Every env — global (--name) or local (henv . / henv path) — is recorded in

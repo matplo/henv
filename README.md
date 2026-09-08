@@ -199,7 +199,7 @@ eval "$(heyy completion)"
 heyy completion --shell fish | source
 ```
 
-### `EXTRA_CLING_ARGS` on Linux
+### `EXTRA_CLING_ARGS` / `CC` / `CXX` on Linux
 
 `cppyy-cling` embeds its own frozen Clang, which can fail to recognize a GCC
 installation newer than anything it was built to know about — on Perlmutter
@@ -213,9 +213,24 @@ another).
 Whenever `heyy` is present in the venv, `henv` computes this automatically
 **on Linux only**, fresh from *this machine's own* `g++ -E -Wp,-v` output —
 never a hardcoded GCC version or distro triplet, so it's a genuine no-op on
-a machine where cling already works fine. Any `EXTRA_CLING_ARGS` you've
-already set yourself — including an explicit `export EXTRA_CLING_ARGS=""`
-as a deliberate opt-out — is always left untouched.
+a machine where cling already works fine.
+
+`henv` also points `CC`/`CXX` at `gcc`/`g++` specifically (same "unless
+already set" rule). This matters separately from the `-isystem` fix above:
+some setups don't keep the generic `cc`/`c++` names in sync with `gcc`/`g++`
+— also seen on Perlmutter, where `c++` stayed pinned to SUSE's base GCC
+7.5.0 even after `module load gcc-native/14` updated `gcc`/`g++` to 14.3.0.
+Anything that respects `CC`/`CXX` then gets the modern compiler instead of
+falling back to whatever `cc`/`c++` happen to resolve to.
+
+All three (`EXTRA_CLING_ARGS`, `CC`, `CXX`) are computed **once**, at the
+exact moment you run `henv` (or `--run`/`--print-activate`) — before that,
+not continuously. Load whichever `gcc` module you want *before* running
+`henv`, not after; loading a different one inside an already-activated
+`henv` subshell won't retroactively update values already baked into that
+shell. Any of the three you've already set yourself — including an explicit
+`export EXTRA_CLING_ARGS=""` as a deliberate opt-out of all three — is
+always left untouched.
 
 ---
 

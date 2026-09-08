@@ -202,12 +202,12 @@ else
     bad "registry entry removed after --delete"
 fi
 
-# --- EXTRA_CLING_ARGS auto-detection ---
+# --- EXTRA_CLING_ARGS / CC / CXX auto-detection ---
 # The one non-hermetic test in this suite: it needs a real cppyy+hepyy
 # install (no --no-hepyy) so heyy is present and the auto-detect gate
-# fires. Verifies the opposite behavior on each OS: non-empty and
-# containing -isystem on Linux (computed from the CI runner's own g++),
-# left completely unset everywhere else.
+# fires. Verifies the opposite behavior on each OS: non-empty (and, for
+# CC/CXX, pointed at gcc/g++ specifically) on Linux, left completely unset
+# everywhere else.
 assert_success "create an env with cppyy+hepyy for the EXTRA_CLING_ARGS check" \
     bash "$HENV" --name clingtest -y --run true
 
@@ -220,11 +220,18 @@ if [ "$(uname -s)" = "Linux" ]; then
         # shellcheck disable=SC2001 # indenting multi-line output; ${//} can't do this per-line
         echo "$cling_env_out" | sed 's/^/    /'
     fi
-else
-    if ! echo "$cling_env_out" | grep -q '^EXTRA_CLING_ARGS='; then
-        ok "EXTRA_CLING_ARGS stays unset on non-Linux"
+    if echo "$cling_env_out" | grep -q '^CC=.*gcc' && echo "$cling_env_out" | grep -q '^CXX=.*g++'; then
+        ok "CC/CXX are auto-detected on Linux, pointed at gcc/g++"
     else
-        bad "EXTRA_CLING_ARGS stays unset on non-Linux"
+        bad "CC/CXX are auto-detected on Linux, pointed at gcc/g++"
+        # shellcheck disable=SC2001 # indenting multi-line output; ${//} can't do this per-line
+        echo "$cling_env_out" | sed 's/^/    /'
+    fi
+else
+    if ! echo "$cling_env_out" | grep -qE '^(EXTRA_CLING_ARGS|CC|CXX)='; then
+        ok "EXTRA_CLING_ARGS/CC/CXX stay unset on non-Linux"
+    else
+        bad "EXTRA_CLING_ARGS/CC/CXX stay unset on non-Linux"
         # shellcheck disable=SC2001 # indenting multi-line output; ${//} can't do this per-line
         echo "$cling_env_out" | sed 's/^/    /'
     fi
