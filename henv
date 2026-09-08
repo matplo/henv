@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # henv — HEP virtual environment manager
 # https://github.com/matplo/henv
-HENV_VERSION="0.5.2"
+HENV_VERSION="0.6.0"
 HENV_SCRIPT_URL="https://raw.githubusercontent.com/matplo/henv/main/henv"
 HENV_DEFAULT_DIR="$HOME/.henvs"
 
@@ -45,6 +45,48 @@ _maybe_fix_cppyy() {
         return 0
     fi
     return 1
+}
+
+_cling_extra_includes() {
+    # Computes an EXTRA_CLING_ARGS -isystem list from the CURRENT machine's
+    # own g++ -- never a hardcoded version number or distro triplet, so this
+    # is inherently per-machine rather than pinned to any one system.
+    #
+    # Works around cppyy-cling embedding its own frozen Clang, which can
+    # fail to auto-detect a GCC installation newer than anything it was
+    # built to recognize (seen on Perlmutter/SUSE with GCC 14: cling's own
+    # header search came up empty, "fatal error: 'filesystem' file not
+    # found"). g++'s own verbose search-path banner gives the exact,
+    # correctly-ordered list of dirs GCC itself resolves -- including plain
+    # /usr/include, which matters because GCC's C++ wrapper headers (e.g.
+    # <cfenv>) use #include_next to reach the real glibc headers there; a
+    # partial -isystem list (C++ dirs only) trades one missing-header error
+    # for another.
+    [ "$(uname -s)" = "Linux" ] || return 1
+    command_exists g++ || return 1
+    local dirs
+    dirs=$(echo | g++ -E -Wp,-v -xc++ - 2>&1 </dev/null \
+        | sed -n '/#include <\.\.\.> search starts here:/,/End of search list\./p' \
+        | sed '1d;$d' | sed 's/^ *//')
+    [ -n "$dirs" ] || return 1
+    local out="" d
+    while IFS= read -r d; do
+        [ -d "$d" ] || continue
+        out="$out -isystem $d"
+    done <<< "$dirs"
+    [ -n "$out" ] || return 1
+    echo "${out# }"
+}
+
+_maybe_export_cling_args() {
+    # ${VAR+x} (not -n "$VAR"): only auto-detect when EXTRA_CLING_ARGS was
+    # never set at all. An explicit `export EXTRA_CLING_ARGS=""` is a real,
+    # deliberate opt-out and is left untouched, same as any other value the
+    # user already set.
+    [ -n "${EXTRA_CLING_ARGS+x}" ] && return 0
+    local args
+    args=$(_cling_extra_includes) || return 0
+    export EXTRA_CLING_ARGS="$args"
 }
 
 # ─── Name registry ────────────────────────────────────────────────────────────
@@ -313,6 +355,10 @@ _venv_pip_install() {
 install_hepyy() {
     # henv is predominantly used with hepyy, so both cppyy and hepyy are
     # installed by default on env creation. Skip with --no-hepyy / --nh.
+    # Set before installing cppyy: heyy init (below) already imports/builds
+    # cppyy's precompiled header, so the fix needs to be live this early.
+    _maybe_export_cling_args
+
     info "Installing cppyy..."
     _venv_pip_install cppyy || warn "cppyy install failed (non-fatal)"
 
@@ -350,6 +396,13 @@ launch_subshell() {
     local tmpfile
     tmpfile=$(mktemp /tmp/henv_init.XXXXXX)
 
+    # Computed here, at write time, in the parent process (same machine the
+    # subshell will run on) -- see _cling_extra_includes for why.
+    local cling_args=""
+    if [ -x "$HENV_PATH/bin/heyy" ] && [ -z "${EXTRA_CLING_ARGS+x}" ]; then
+        cling_args=$(_cling_extra_includes) || true
+    fi
+
     # First line of the init file cleans up the file itself
     cat > "$tmpfile" <<INITEOF
 rm -f "$tmpfile"
@@ -363,6 +416,7 @@ fi
 source "$HENV_PATH/bin/activate"
 ${HENV_PACKAGES_DIR:+export HEPYY_PACKAGES_DIR="$HENV_PACKAGES_DIR"}
 ${HENV_SYSTEM_PACKAGES_DIR:+export HEPYY_SYSTEM_PACKAGES_DIR="$HENV_SYSTEM_PACKAGES_DIR"}
+${cling_args:+export EXTRA_CLING_ARGS="$cling_args"}
 # Decorate prompt and export markers
 export HENV_ACTIVE="$HENV_LABEL"
 export HENV_PATH="$HENV_PATH"
@@ -407,6 +461,11 @@ cmd_print_activate() {
     echo "source \"$HENV_PATH/bin/activate\""
     [ -n "$HENV_PACKAGES_DIR" ]        && echo "export HEPYY_PACKAGES_DIR=\"$HENV_PACKAGES_DIR\""
     [ -n "$HENV_SYSTEM_PACKAGES_DIR" ] && echo "export HEPYY_SYSTEM_PACKAGES_DIR=\"$HENV_SYSTEM_PACKAGES_DIR\""
+    if [ -x "$HENV_PATH/bin/heyy" ] && [ -z "${EXTRA_CLING_ARGS+x}" ]; then
+        local cling_args
+        cling_args=$(_cling_extra_includes) || true
+        [ -n "$cling_args" ] && echo "export EXTRA_CLING_ARGS=\"$cling_args\""
+    fi
     echo "export HENV_ACTIVE=\"$HENV_LABEL\""
     echo "export HENV_PATH=\"$HENV_PATH\""
     echo "PS1=\"(henv:$HENV_LABEL) \$PS1\""
@@ -437,6 +496,10 @@ cmd_run() {
     [ "${#HENV_RUN_ARGS[@]}" -gt 0 ] || die "--run requires a command"
     local tmpfile
     tmpfile=$(mktemp /tmp/henv_run.XXXXXX)
+    local cling_args=""
+    if [ -x "$HENV_PATH/bin/heyy" ] && [ -z "${EXTRA_CLING_ARGS+x}" ]; then
+        cling_args=$(_cling_extra_includes) || true
+    fi
     cat > "$tmpfile" <<INITEOF
 rm -f "$tmpfile"
 if [ -f "\$HOME/.bashrc" ]; then
@@ -447,6 +510,7 @@ fi
 source "$HENV_PATH/bin/activate"
 ${HENV_PACKAGES_DIR:+export HEPYY_PACKAGES_DIR="$HENV_PACKAGES_DIR"}
 ${HENV_SYSTEM_PACKAGES_DIR:+export HEPYY_SYSTEM_PACKAGES_DIR="$HENV_SYSTEM_PACKAGES_DIR"}
+${cling_args:+export EXTRA_CLING_ARGS="$cling_args"}
 export HENV_ACTIVE="$HENV_LABEL"
 export HENV_PATH="$HENV_PATH"
 if [ -x "$HENV_PATH/bin/heyy" ]; then
@@ -720,6 +784,13 @@ for a bare venv with neither. Whenever heyy ends up present in the venv
 automatically inside the henv subshell/--run. Right after heyy is installed,
 henv also prints the one-liner to add heyy's own completion to your normal
 shell rc (outside henv) — see SHELL INTEGRATION below.
+
+On Linux, whenever heyy is present, henv also auto-exports EXTRA_CLING_ARGS
+(computed fresh from this machine's own g++ every time — never hardcoded)
+to work around cppyy-cling's bundled Clang failing to recognize a GCC
+newer than it knows about (seen on Perlmutter with GCC 14: 'fatal error:
+filesystem file not found'). A value you already set — even an explicit
+empty `export EXTRA_CLING_ARGS=""` — is always left untouched.
 
 NAME REGISTRY:
   Every env — global (--name) or local (henv . / henv path) — is recorded in

@@ -202,5 +202,34 @@ else
     bad "registry entry removed after --delete"
 fi
 
+# --- EXTRA_CLING_ARGS auto-detection ---
+# The one non-hermetic test in this suite: it needs a real cppyy+hepyy
+# install (no --no-hepyy) so heyy is present and the auto-detect gate
+# fires. Verifies the opposite behavior on each OS: non-empty and
+# containing -isystem on Linux (computed from the CI runner's own g++),
+# left completely unset everywhere else.
+assert_success "create an env with cppyy+hepyy for the EXTRA_CLING_ARGS check" \
+    bash "$HENV" --name clingtest -y --run true
+
+cling_env_out="$(bash "$HENV" --name clingtest --run env 2>&1)"
+if [ "$(uname -s)" = "Linux" ]; then
+    if echo "$cling_env_out" | grep -q '^EXTRA_CLING_ARGS=.*-isystem'; then
+        ok "EXTRA_CLING_ARGS is auto-detected on Linux when heyy is present"
+    else
+        bad "EXTRA_CLING_ARGS is auto-detected on Linux when heyy is present"
+        # shellcheck disable=SC2001 # indenting multi-line output; ${//} can't do this per-line
+        echo "$cling_env_out" | sed 's/^/    /'
+    fi
+else
+    if ! echo "$cling_env_out" | grep -q '^EXTRA_CLING_ARGS='; then
+        ok "EXTRA_CLING_ARGS stays unset on non-Linux"
+    else
+        bad "EXTRA_CLING_ARGS stays unset on non-Linux"
+        # shellcheck disable=SC2001 # indenting multi-line output; ${//} can't do this per-line
+        echo "$cling_env_out" | sed 's/^/    /'
+    fi
+fi
+bash "$HENV" --name clingtest --delete --yes >/dev/null 2>&1
+
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

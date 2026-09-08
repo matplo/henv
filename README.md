@@ -199,6 +199,24 @@ eval "$(heyy completion)"
 heyy completion --shell fish | source
 ```
 
+### `EXTRA_CLING_ARGS` on Linux
+
+`cppyy-cling` embeds its own frozen Clang, which can fail to recognize a GCC
+installation newer than anything it was built to know about — on Perlmutter
+(GCC 14), `import cppyy` crashed with `fatal error: 'filesystem' file not
+found`. The fix is exporting `EXTRA_CLING_ARGS` with `-isystem` flags for
+GCC's real include search path (including plain `/usr/include` — GCC's C++
+header wrappers like `<cfenv>` use `#include_next` to reach the real glibc
+headers there, so leaving it out just trades one missing-header error for
+another).
+
+Whenever `heyy` is present in the venv, `henv` computes this automatically
+**on Linux only**, fresh from *this machine's own* `g++ -E -Wp,-v` output —
+never a hardcoded GCC version or distro triplet, so it's a genuine no-op on
+a machine where cling already works fine. Any `EXTRA_CLING_ARGS` you've
+already set yourself — including an explicit `export EXTRA_CLING_ARGS=""`
+as a deliberate opt-out — is always left untouched.
+
 ---
 
 ## Running commands
