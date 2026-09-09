@@ -111,6 +111,19 @@ assert_contains "--fix-cppyy --no-cppyy forces removal" "Removing binary cppyy w
 assert_contains "-n is a short alias for --name" "hi4" \
     bash "$HENV" -n citest --run echo hi4
 
+# Regression test: --run/--print-activate/the subshell all bake env-var
+# exports into a generated init file via ${var:+export X="$var"} inside an
+# unquoted heredoc -- that construct's "word" undergoes its own word/quote-
+# removal expansion, so embedded literal quotes get silently stripped for
+# any multi-word value (a single-word path like a typical --packages-dir
+# never exposed it; EXTRA_CLING_ARGS's space-separated -isystem list did,
+# turning one export into a cascade of "not a valid identifier" errors).
+# Fixed via printf %q; this exercises the same code path with a value any
+# OS can hit, hermetically.
+assert_contains "a value with a space survives --run's generated init file" \
+    "HEPYY_PACKAGES_DIR=/my pkgs/with a space" \
+    bash "$HENV" --name citest --packages-dir "/my pkgs/with a space" --no-hepyy --run env
+
 # --- Name registry: henv . registers a name; --name resolves it from anywhere ---
 
 mkdir -p "$HOME/proj/regtest" "$HOME/proj2/regtest" "$HOME/newloc"

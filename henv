@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # henv — HEP virtual environment manager
 # https://github.com/matplo/henv
-HENV_VERSION="0.6.2"
+HENV_VERSION="0.6.3"
 HENV_SCRIPT_URL="https://raw.githubusercontent.com/matplo/henv/main/henv"
 HENV_DEFAULT_DIR="$HOME/.henvs"
 
@@ -436,6 +436,19 @@ launch_subshell() {
         fi
     fi
 
+    # %q-escaped so each value survives as ONE shell word once embedded
+    # below: ${var:+word}'s "word" undergoes its own word/quote-removal
+    # expansion, so a literal "$var" embedded in it loses its quotes there
+    # (unlike a plain "$var" substitution elsewhere in this file) -- silently
+    # broke any multi-word value, e.g. EXTRA_CLING_ARGS's space-separated
+    # -isystem list turned into one `export` call per path.
+    local packages_dir_q="" system_packages_dir_q="" cling_args_q="" cling_cc_q="" cling_cxx_q=""
+    [ -n "$HENV_PACKAGES_DIR" ]        && packages_dir_q=$(printf '%q' "$HENV_PACKAGES_DIR")
+    [ -n "$HENV_SYSTEM_PACKAGES_DIR" ] && system_packages_dir_q=$(printf '%q' "$HENV_SYSTEM_PACKAGES_DIR")
+    [ -n "$cling_args" ] && cling_args_q=$(printf '%q' "$cling_args")
+    [ -n "$cling_cc" ]   && cling_cc_q=$(printf '%q' "$cling_cc")
+    [ -n "$cling_cxx" ]  && cling_cxx_q=$(printf '%q' "$cling_cxx")
+
     # First line of the init file cleans up the file itself
     cat > "$tmpfile" <<INITEOF
 rm -f "$tmpfile"
@@ -447,11 +460,11 @@ elif [ -f "\$HOME/.bash_profile" ]; then
 fi
 # Activate the venv
 source "$HENV_PATH/bin/activate"
-${HENV_PACKAGES_DIR:+export HEPYY_PACKAGES_DIR="$HENV_PACKAGES_DIR"}
-${HENV_SYSTEM_PACKAGES_DIR:+export HEPYY_SYSTEM_PACKAGES_DIR="$HENV_SYSTEM_PACKAGES_DIR"}
-${cling_args:+export EXTRA_CLING_ARGS="$cling_args"}
-${cling_cc:+export CC="$cling_cc"}
-${cling_cxx:+export CXX="$cling_cxx"}
+${packages_dir_q:+export HEPYY_PACKAGES_DIR=$packages_dir_q}
+${system_packages_dir_q:+export HEPYY_SYSTEM_PACKAGES_DIR=$system_packages_dir_q}
+${cling_args_q:+export EXTRA_CLING_ARGS=$cling_args_q}
+${cling_cc_q:+export CC=$cling_cc_q}
+${cling_cxx_q:+export CXX=$cling_cxx_q}
 # Decorate prompt and export markers
 export HENV_ACTIVE="$HENV_LABEL"
 export HENV_PATH="$HENV_PATH"
@@ -547,6 +560,13 @@ cmd_run() {
             [ -z "${CXX+x}" ] && cling_cxx=$(command -v g++ 2>/dev/null)
         fi
     fi
+    # %q-escaped -- see the matching comment in launch_subshell for why.
+    local packages_dir_q="" system_packages_dir_q="" cling_args_q="" cling_cc_q="" cling_cxx_q=""
+    [ -n "$HENV_PACKAGES_DIR" ]        && packages_dir_q=$(printf '%q' "$HENV_PACKAGES_DIR")
+    [ -n "$HENV_SYSTEM_PACKAGES_DIR" ] && system_packages_dir_q=$(printf '%q' "$HENV_SYSTEM_PACKAGES_DIR")
+    [ -n "$cling_args" ] && cling_args_q=$(printf '%q' "$cling_args")
+    [ -n "$cling_cc" ]   && cling_cc_q=$(printf '%q' "$cling_cc")
+    [ -n "$cling_cxx" ]  && cling_cxx_q=$(printf '%q' "$cling_cxx")
     cat > "$tmpfile" <<INITEOF
 rm -f "$tmpfile"
 if [ -f "\$HOME/.bashrc" ]; then
@@ -555,11 +575,11 @@ elif [ -f "\$HOME/.bash_profile" ]; then
     source "\$HOME/.bash_profile" 2>/dev/null
 fi
 source "$HENV_PATH/bin/activate"
-${HENV_PACKAGES_DIR:+export HEPYY_PACKAGES_DIR="$HENV_PACKAGES_DIR"}
-${HENV_SYSTEM_PACKAGES_DIR:+export HEPYY_SYSTEM_PACKAGES_DIR="$HENV_SYSTEM_PACKAGES_DIR"}
-${cling_args:+export EXTRA_CLING_ARGS="$cling_args"}
-${cling_cc:+export CC="$cling_cc"}
-${cling_cxx:+export CXX="$cling_cxx"}
+${packages_dir_q:+export HEPYY_PACKAGES_DIR=$packages_dir_q}
+${system_packages_dir_q:+export HEPYY_SYSTEM_PACKAGES_DIR=$system_packages_dir_q}
+${cling_args_q:+export EXTRA_CLING_ARGS=$cling_args_q}
+${cling_cc_q:+export CC=$cling_cc_q}
+${cling_cxx_q:+export CXX=$cling_cxx_q}
 export HENV_ACTIVE="$HENV_LABEL"
 export HENV_PATH="$HENV_PATH"
 if [ -x "$HENV_PATH/bin/heyy" ]; then
