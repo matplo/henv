@@ -213,7 +213,14 @@ another).
 Whenever `heyy` is present in the venv, `henv` computes this automatically
 **on Linux only**, fresh from *this machine's own* `g++ -E -Wp,-v` output —
 never a hardcoded GCC version or distro triplet, so it's a genuine no-op on
-a machine where cling already works fine.
+a machine where cling already works fine. `CPATH`/`CPLUS_INCLUDE_PATH`/
+`C_INCLUDE_PATH` are unset just for that one probe: whatever they inject
+(e.g. a CUDA toolkit's include dirs, seen on Perlmutter via the NVIDIA HPC
+SDK module) would otherwise end up in the `-isystem` list too — and their
+mere presence there was enough to make `cppyy-cling` try, and fail, to
+build a CUDA-aware precompiled header. `EXTRA_CLING_ARGS` only needs GCC's
+own toolchain-native search path, not whatever else the ambient shell has
+injected for unrelated purposes.
 
 `henv` also points `CC`/`CXX` at `gcc`/`g++` specifically (same "unless
 already set" rule). This matters separately from the `-isystem` fix above:

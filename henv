@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # henv — HEP virtual environment manager
 # https://github.com/matplo/henv
-HENV_VERSION="0.6.1"
+HENV_VERSION="0.6.2"
 HENV_SCRIPT_URL="https://raw.githubusercontent.com/matplo/henv/main/henv"
 HENV_DEFAULT_DIR="$HOME/.henvs"
 
@@ -62,10 +62,24 @@ _cling_extra_includes() {
     # <cfenv>) use #include_next to reach the real glibc headers there; a
     # partial -isystem list (C++ dirs only) trades one missing-header error
     # for another.
+    #
+    # CPATH/CPLUS_INCLUDE_PATH/C_INCLUDE_PATH are unset for this one probe:
+    # g++ -Wp,-v reports its EFFECTIVE search path, which includes whatever
+    # those vars inject -- on Perlmutter that was the NVIDIA HPC SDK's
+    # cuda/math_libs dirs (unrelated to fixing cling's GCC-version blind
+    # spot), and their mere presence in the -isystem list was enough to
+    # make cppyy-cling try to build a CUDA-aware PCH via its bundled
+    # cling-ptx, which then crashed on unrelated flag-parsing bugs. What
+    # cling actually needs here is GCC's own toolchain-native search path,
+    # not whatever else happens to be in the ambient shell's CPATH.
     [ "$(uname -s)" = "Linux" ] || return 1
     command_exists g++ || return 1
     local dirs
-    dirs=$(echo | g++ -E -Wp,-v -xc++ - 2>&1 </dev/null \
+    dirs=$(
+        unset CPATH CPLUS_INCLUDE_PATH C_INCLUDE_PATH
+        echo | g++ -E -Wp,-v -xc++ - 2>&1 </dev/null
+    )
+    dirs=$(echo "$dirs" \
         | sed -n '/#include <\.\.\.> search starts here:/,/End of search list\./p' \
         | sed '1d;$d' | sed 's/^ *//')
     [ -n "$dirs" ] || return 1
@@ -828,8 +842,13 @@ about (seen on Perlmutter with GCC 14: 'fatal error: filesystem file not
 found'). CC/CXX matter separately because some setups don't keep the
 generic 'cc'/'c++' names in sync with 'gcc'/'g++' (also seen on Perlmutter:
 'c++' stayed pinned to SUSE's base GCC 7.5.0 even after loading a gcc-14
-module). All of this is computed once, at the moment you run henv — load
-whichever gcc module you want *before* running henv, not after. A value
+module). CPATH/CPLUS_INCLUDE_PATH/C_INCLUDE_PATH are unset just for the g++
+probe that computes EXTRA_CLING_ARGS, since anything they inject (e.g. a
+CUDA toolkit's include dirs) ends up in cling's -isystem list too, and its
+mere presence there was enough to make cppyy-cling try (and fail) to build
+a CUDA-aware precompiled header on Perlmutter. All of this is computed
+once, at the moment you run henv — load whichever gcc module you want
+*before* running henv, not after. A value
 you already set for any of these three — even an explicit empty
 `export EXTRA_CLING_ARGS=""` — is always left untouched.
 
